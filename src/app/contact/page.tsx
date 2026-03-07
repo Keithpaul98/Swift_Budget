@@ -4,9 +4,11 @@
 // Contact Us Page
 // =============================================================================
 // Contact form for user inquiries and support
+// Sends emails via EmailJS to keithpaul.dev@gmail.com
 // =============================================================================
 
 import { useState } from "react";
+import emailjs from "@emailjs/browser";
 import {
   Card,
   CardContent,
@@ -23,6 +25,7 @@ import {
   Send,
   CheckCircle2,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 export default function ContactPage() {
@@ -34,22 +37,43 @@ export default function ContactPage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
+    setError(null);
 
-    // Simulate form submission (you can integrate with an email service later)
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      // Send email using EmailJS
+      const result = await emailjs.send(
+        process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID!,
+        process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID!,
+        {
+          from_name: formData.name,
+          from_email: formData.email,
+          subject: formData.subject,
+          message: formData.message,
+          to_email: "keithpaul.dev@gmail.com",
+        },
+        process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY!
+      );
 
-    setSubmitting(false);
-    setSubmitted(true);
+      if (result.status === 200) {
+        setSubmitting(false);
+        setSubmitted(true);
 
-    // Reset form after 3 seconds
-    setTimeout(() => {
-      setFormData({ name: "", email: "", subject: "", message: "" });
-      setSubmitted(false);
-    }, 3000);
+        // Reset form after 3 seconds
+        setTimeout(() => {
+          setFormData({ name: "", email: "", subject: "", message: "" });
+          setSubmitted(false);
+        }, 3000);
+      }
+    } catch (err: any) {
+      console.error("EmailJS Error:", err);
+      setError("Failed to send message. Please try again or email us directly at keithpaul.dev@gmail.com");
+      setSubmitting(false);
+    }
   };
 
   if (submitted) {
@@ -92,6 +116,13 @@ export default function ContactPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <div className="flex items-center gap-2 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <p>{error}</p>
+                </div>
+              )}
+              
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="name">Name</Label>
