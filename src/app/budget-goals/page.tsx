@@ -7,9 +7,12 @@
 // =============================================================================
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase";
 import { formatCurrency } from "@/types/database";
+import { useAuth } from "@/hooks/useAuth";
+import { logAudit } from "@/lib/audit";
+import { ERROR_MESSAGES } from "@/lib/constants";
+import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   Card,
   CardContent,
@@ -25,11 +28,12 @@ import {
   Plus,
   Pencil,
   Trash2,
-  Loader2,
   AlertTriangle,
   CheckCircle2,
+  Loader2,
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth } from "date-fns";
+import { GridPageSkeleton } from "@/components/page-skeleton";
+import { format, startOfMonth, endOfMonth, addWeeks, addYears, startOfWeek, endOfWeek } from "date-fns";
 
 interface BudgetGoal {
   id: number;
@@ -51,14 +55,15 @@ interface Category {
 }
 
 export default function BudgetGoalsPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const { user, loading: authLoading, supabase } = useAuth();
+  const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [budgetGoals, setBudgetGoals] = useState<BudgetGoal[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
 
   const [formData, setFormData] = useState({
     category_id: "",
@@ -69,19 +74,43 @@ export default function BudgetGoalsPage() {
     alert_threshold: "80",
   });
 
+  // BUG-004 fix: Auto-set date ranges when period changes
+  const handlePeriodChange = (period: string) => {
+    const now = new Date();
+    let start: Date;
+    let end: Date;
+
+    switch (period) {
+      case "weekly":
+        start = startOfWeek(now, { weekStartsOn: 1 });
+        end = endOfWeek(now, { weekStartsOn: 1 });
+        break;
+      case "yearly":
+        start = new Date(now.getFullYear(), 0, 1);
+        end = new Date(now.getFullYear(), 11, 31);
+        break;
+      case "monthly":
+      default:
+        start = startOfMonth(now);
+        end = endOfMonth(now);
+        break;
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      period,
+      start_date: format(start, "yyyy-MM-dd"),
+      end_date: format(end, "yyyy-MM-dd"),
+    }));
+  };
+
   useEffect(() => {
-    loadData();
-  }, []);
+    if (!authLoading && user) loadData();
+  }, [authLoading, user]);
 
   const loadData = async () => {
+    if (!user) return;
     try {
-      const supabase = createClient();
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        router.push("/login");
-        return;
-      }
 
       // Fetch budget goals
       const { data: goalsData, error: goalsError } = await supabase
@@ -93,49 +122,45 @@ export default function BudgetGoalsPage() {
       if (goalsError) {
         console.error("Error fetching budget goals:", goalsError);
       } else {
-        // Fetch spending for each goal
-        const goalsWithSpending = await Promise.all(
-          (goalsData || []).map(async (goal: any) => {
-            let categoryName = "Overall Budget";
-            let spent = 0;
+        // Batch fetch all categories and expenses (no N+1)
+        const allGoals = goalsData || [];
+        const categoryIds = [...new Set(allGoals.map((g: BudgetGoal) => g.category_id).filter(Boolean))];
 
+        // Fetch all needed categories in one query
+        let categoryMap = new Map<number, string>();
+        if (categoryIds.length > 0) {
+          const { data: cats } = await supabase
+            .from("categories")
+            .select("id, name")
+            .in("id", categoryIds);
+          (cats || []).forEach((c) => categoryMap.set(c.id, c.name));
+        }
+
+        // Fetch all user expenses in one query
+        const { data: allExpenses } = await supabase
+          .from("transactions")
+          .select("amount, category_id, date")
+          .eq("user_id", user.id)
+          .eq("type", "expense")
+          .eq("is_deleted", false);
+
+        const goalsWithSpending = allGoals.map((goal: BudgetGoal) => {
+          const categoryName = goal.category_id
+            ? categoryMap.get(goal.category_id) || "Unknown"
+            : "Overall Budget";
+
+          const relevantExpenses = (allExpenses || []).filter((t) => {
+            const inDateRange = t.date >= goal.start_date && t.date <= goal.end_date;
             if (goal.category_id) {
-              const { data: category } = await supabase
-                .from("categories")
-                .select("name")
-                .eq("id", goal.category_id)
-                .single();
-              categoryName = category?.name || "Unknown";
-
-              const { data: transactions } = await supabase
-                .from("transactions")
-                .select("amount")
-                .eq("user_id", user.id)
-                .eq("category_id", goal.category_id)
-                .eq("type", "expense")
-                .gte("date", goal.start_date)
-                .lte("date", goal.end_date);
-
-              spent = transactions?.reduce((sum, t) => sum + Number(t.amount), 0) || 0;
-            } else {
-              const { data: transactions } = await supabase
-                .from("transactions")
-                .select("amount")
-                .eq("user_id", user.id)
-                .eq("type", "expense")
-                .gte("date", goal.start_date)
-                .lte("date", goal.end_date);
-
-              spent = transactions?.reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+              return inDateRange && t.category_id === goal.category_id;
             }
+            return inDateRange;
+          });
 
-            return {
-              ...goal,
-              category_name: categoryName,
-              spent,
-            };
-          })
-        );
+          const spent = relevantExpenses.reduce((sum, t) => sum + Number(t.amount), 0);
+
+          return { ...goal, category_name: categoryName, spent };
+        });
 
         setBudgetGoals(goalsWithSpending);
       }
@@ -149,10 +174,10 @@ export default function BudgetGoalsPage() {
         .order("name");
 
       setCategories(catData || []);
-      setLoading(false);
+      setDataLoading(false);
     } catch (err) {
       console.error("Error loading data:", err);
-      setLoading(false);
+      setDataLoading(false);
     }
   };
 
@@ -162,22 +187,50 @@ export default function BudgetGoalsPage() {
     setSaving(true);
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      // Client-side validation
+      const amount = parseFloat(formData.amount);
+      if (isNaN(amount) || amount <= 0) {
+        setError(ERROR_MESSAGES.amountPositive);
+        setSaving(false);
+        return;
+      }
+      if (formData.end_date <= formData.start_date) {
+        setError(ERROR_MESSAGES.endDateAfterStart);
+        setSaving(false);
+        return;
+      }
+      const threshold = parseInt(formData.alert_threshold);
+      if (isNaN(threshold) || threshold < 1 || threshold > 100) {
+        setError(ERROR_MESSAGES.thresholdRange);
+        setSaving(false);
+        return;
+      }
 
-      if (!user) {
-        router.push("/login");
+      if (!user) return;
+
+      // BUG-003 fix: Check for duplicate budget goal (same category + overlapping dates)
+      const categoryIdNum = formData.category_id ? parseInt(formData.category_id) : null;
+      const duplicate = budgetGoals.find(
+        (g) =>
+          g.id !== editingId &&
+          g.category_id === categoryIdNum &&
+          g.start_date <= formData.end_date &&
+          g.end_date >= formData.start_date
+      );
+      if (duplicate) {
+        setError("A budget goal for this category already exists in the selected date range.");
+        setSaving(false);
         return;
       }
 
       const goalData = {
         user_id: user.id,
         category_id: formData.category_id ? parseInt(formData.category_id) : null,
-        amount: parseFloat(formData.amount),
+        amount,
         period: formData.period,
         start_date: formData.start_date,
         end_date: formData.end_date,
-        alert_threshold: parseInt(formData.alert_threshold),
+        alert_threshold: threshold,
         is_active: true,
       };
 
@@ -193,15 +246,21 @@ export default function BudgetGoalsPage() {
           setSaving(false);
           return;
         }
+        await logAudit(supabase, user.id, "update", "budget_goal", editingId, null, goalData as Record<string, unknown>);
       } else {
-        const { error: insertError } = await supabase
+        const { data: inserted, error: insertError } = await supabase
           .from("budget_goals")
-          .insert([goalData]);
+          .insert([goalData])
+          .select("id")
+          .single();
 
         if (insertError) {
           setError(insertError.message);
           setSaving(false);
           return;
+        }
+        if (inserted) {
+          await logAudit(supabase, user.id, "create", "budget_goal", inserted.id, null, goalData as Record<string, unknown>);
         }
       }
 
@@ -217,8 +276,9 @@ export default function BudgetGoalsPage() {
       setEditingId(null);
       setSaving(false);
       loadData();
+      toast.success(editingId ? "Budget goal updated" : "Budget goal added");
     } catch (err) {
-      setError("Failed to save budget goal");
+      setError(ERROR_MESSAGES.saveFailed("budget goal"));
       setSaving(false);
     }
   };
@@ -237,16 +297,9 @@ export default function BudgetGoalsPage() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this budget goal?")) {
-      return;
-    }
+    if (!user) return;
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
-      if (!user) return;
-
       const { error: deleteError } = await supabase
         .from("budget_goals")
         .delete()
@@ -258,9 +311,11 @@ export default function BudgetGoalsPage() {
         return;
       }
 
+      await logAudit(supabase, user.id, "delete", "budget_goal", id);
       loadData();
+      toast.success("Budget goal deleted");
     } catch (err) {
-      setError("Failed to delete budget goal");
+      setError(ERROR_MESSAGES.deleteFailed("budget goal"));
     }
   };
 
@@ -290,12 +345,8 @@ export default function BudgetGoalsPage() {
     return <CheckCircle2 className="h-5 w-5 text-green-500" />;
   };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+  if (authLoading || dataLoading) {
+    return <GridPageSkeleton />;
   }
 
   return (
@@ -351,12 +402,31 @@ export default function BudgetGoalsPage() {
                   id="amount"
                   type="number"
                   step="0.01"
+                  min="0.01"
                   placeholder="50000"
                   value={formData.amount}
                   onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                   required
                   disabled={saving}
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="period">Period</Label>
+                <select
+                  id="period"
+                  value={formData.period}
+                  onChange={(e) => handlePeriodChange(e.target.value)}
+                  disabled={saving}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Changing the period will auto-set the date range below
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -435,10 +505,10 @@ export default function BudgetGoalsPage() {
                     </div>
                   </div>
                   <div className="flex gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => handleEdit(goal)}>
+                    <Button variant="ghost" size="icon" aria-label="Edit budget goal" onClick={() => handleEdit(goal)}>
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => handleDelete(goal.id)}>
+                    <Button variant="ghost" size="icon" aria-label="Delete budget goal" onClick={() => setDeleteId(goal.id)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   </div>
@@ -496,6 +566,18 @@ export default function BudgetGoalsPage() {
           </Card>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={deleteId !== null}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        title="Delete Budget Goal"
+        description="Are you sure you want to delete this budget goal? This action cannot be undone."
+        onConfirm={() => {
+          if (deleteId) handleDelete(deleteId);
+          setDeleteId(null);
+        }}
+      />
     </div>
   );
 }

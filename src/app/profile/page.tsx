@@ -8,8 +8,7 @@
 // =============================================================================
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,10 +33,9 @@ interface Profile {
 }
 
 export default function ProfilePage() {
-  const router = useRouter();
-  const [user, setUser] = useState<any>(null);
+  const { user, loading: authLoading, supabase } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,47 +45,35 @@ export default function ProfilePage() {
   const [username, setUsername] = useState("");
   const [emailNotifications, setEmailNotifications] = useState(true);
 
-  // Load user and profile data
+  // Load profile data
   useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        const supabase = createClient();
-        
-        // Get current user
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        
-        if (userError || !user) {
-          router.push("/login");
-          return;
-        }
+    if (!authLoading && user) loadProfile();
+  }, [authLoading, user]);
 
-        setUser(user);
+  const loadProfile = async () => {
+    if (!user) return;
+    try {
+      const { data: profileData, error: profileError } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single();
 
-        // Get profile from database
-        const { data: profileData, error: profileError } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", user.id)
-          .single();
-
-        if (profileError) {
-          setError("Failed to load profile");
-          setLoading(false);
-          return;
-        }
-
-        setProfile(profileData);
-        setUsername(profileData.username);
-        setEmailNotifications(profileData.email_notifications);
-        setLoading(false);
-      } catch (err) {
-        setError("An unexpected error occurred");
-        setLoading(false);
+      if (profileError) {
+        setError("Failed to load profile");
+        setDataLoading(false);
+        return;
       }
-    };
 
-    loadProfile();
-  }, [router]);
+      setProfile(profileData);
+      setUsername(profileData.username);
+      setEmailNotifications(profileData.email_notifications);
+      setDataLoading(false);
+    } catch (err) {
+      setError("An unexpected error occurred");
+      setDataLoading(false);
+    }
+  };
 
   // Handle profile update
   const handleUpdateProfile = async (e: React.FormEvent) => {
@@ -97,7 +83,7 @@ export default function ProfilePage() {
     setSaving(true);
 
     try {
-      const supabase = createClient();
+      if (!user) return;
 
       const { error: updateError } = await supabase
         .from("profiles")
@@ -122,15 +108,7 @@ export default function ProfilePage() {
       setSaving(false);
 
       // Refresh profile data
-      const { data: updatedProfile } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .single();
-
-      if (updatedProfile) {
-        setProfile(updatedProfile);
-      }
+      loadProfile();
     } catch (err) {
       setError("Failed to update profile");
       setSaving(false);
@@ -159,8 +137,6 @@ export default function ProfilePage() {
     setUploading(true);
 
     try {
-      const supabase = createClient();
-
       // Create unique filename
       const fileExt = file.name.split(".").pop();
       const fileName = `${user.id}-${Date.now()}.${fileExt}`;
@@ -206,22 +182,14 @@ export default function ProfilePage() {
       setUploading(false);
 
       // Refresh profile
-      const { data: updatedProfile } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .single();
-
-      if (updatedProfile) {
-        setProfile(updatedProfile);
-      }
+      loadProfile();
     } catch (err) {
       setError("Failed to upload image");
       setUploading(false);
     }
   };
 
-  if (loading) {
+  if (authLoading || dataLoading) {
     return (
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -378,14 +346,6 @@ export default function ProfilePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-3">
-              <User className="h-5 w-5 text-muted-foreground" />
-              <div>
-                <p className="text-sm font-medium">User ID</p>
-                <p className="text-sm text-muted-foreground">{user.id}</p>
-              </div>
-            </div>
-            <Separator />
             <div className="flex items-center gap-3">
               <Mail className="h-5 w-5 text-muted-foreground" />
               <div>

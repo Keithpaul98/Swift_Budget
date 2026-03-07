@@ -8,9 +8,12 @@
 // =============================================================================
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase";
 import { formatCurrency } from "@/types/database";
+import { useAuth } from "@/hooks/useAuth";
+import { logAudit } from "@/lib/audit";
+import { ITEMS_PER_PAGE, ERROR_MESSAGES } from "@/lib/constants";
+import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   Card,
   CardContent,
@@ -21,6 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListPageSkeleton } from "@/components/page-skeleton";
 import {
   ArrowLeftRight,
   Plus,
@@ -32,6 +36,9 @@ import {
   ArrowDownRight,
   Loader2,
   X,
+  ChevronLeft,
+  ChevronRight,
+  Download,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -54,17 +61,27 @@ interface Category {
   type: "income" | "expense";
 }
 
+interface Project {
+  id: number;
+  name: string;
+}
+
 export default function TransactionsPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const { user, loading: authLoading, supabase } = useAuth();
+  const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "income" | "expense">("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -73,62 +90,40 @@ export default function TransactionsPage() {
     date: format(new Date(), "yyyy-MM-dd"),
     type: "expense" as "income" | "expense",
     category_id: "",
+    project_id: "",
   });
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (!authLoading && user) loadData();
+  }, [authLoading, user]);
 
   const loadData = async () => {
+    if (!user) return;
     try {
-      const supabase = createClient();
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        router.push("/login");
-        return;
-      }
-
-      // Fetch transactions with categories
+      // Fetch transactions with category join (no N+1 queries)
       const { data: transData, error: transError } = await supabase
         .from("transactions")
-        .select("*")
+        .select("*, categories(name)")
         .eq("user_id", user.id)
+        .eq("is_deleted", false)
         .order("date", { ascending: false });
 
       if (transError) {
         console.error("Error fetching transactions:", transError);
-        console.error("Error details:", JSON.stringify(transError, null, 2));
         setTransactions([]);
       } else {
-        // Handle empty data
-        if (!transData || transData.length === 0) {
-          setTransactions([]);
-        } else {
-          // Fetch category names separately
-          const transWithCategories = await Promise.all(
-            transData.map(async (t: any) => {
-              const { data: category } = await supabase
-                .from("categories")
-                .select("name")
-                .eq("id", t.category_id)
-                .single();
-              
-              return {
-                ...t,
-                categories: { name: category?.name || "Uncategorized" },
-              };
-            })
-          );
-          setTransactions(transWithCategories);
-        }
+        const formatted = (transData || []).map((t) => ({
+          ...t,
+          categories: { name: t.categories?.name || "Uncategorized" },
+        }));
+        setTransactions(formatted);
       }
 
       // Fetch categories
       const { data: catData, error: catError } = await supabase
         .from("categories")
         .select("id, name, type")
-        .or(`user_id.eq.${user.id},is_default.eq.true`)
+        .or(`user_id.eq.${user!.id},is_default.eq.true`)
         .order("name");
 
       if (catError) {
@@ -137,10 +132,20 @@ export default function TransactionsPage() {
         setCategories(catData || []);
       }
 
-      setLoading(false);
+      // Fetch projects for the project dropdown
+      const { data: projData } = await supabase
+        .from("projects")
+        .select("id, name")
+        .eq("user_id", user!.id)
+        .eq("is_active", true)
+        .order("name");
+
+      setProjects(projData || []);
+
+      setDataLoading(false);
     } catch (err) {
       console.error("Error loading data:", err);
-      setLoading(false);
+      setDataLoading(false);
     }
   };
 
@@ -150,21 +155,29 @@ export default function TransactionsPage() {
     setSaving(true);
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.push("/login");
+      // Client-side validation
+      const amount = parseFloat(formData.amount);
+      if (isNaN(amount) || amount <= 0) {
+        setError(ERROR_MESSAGES.amountPositive);
+        setSaving(false);
+        return;
+      }
+      if (!formData.description.trim()) {
+        setError(ERROR_MESSAGES.descriptionEmpty);
+        setSaving(false);
         return;
       }
 
-      const transactionData = {
+      if (!user) return;
+
+      const transactionData: Record<string, unknown> = {
         user_id: user.id,
-        amount: parseFloat(formData.amount),
-        description: formData.description,
+        amount,
+        description: formData.description.trim(),
         date: formData.date,
         type: formData.type,
         category_id: parseInt(formData.category_id),
+        project_id: formData.project_id ? parseInt(formData.project_id) : null,
       };
 
       if (editingId) {
@@ -180,16 +193,22 @@ export default function TransactionsPage() {
           setSaving(false);
           return;
         }
+        await logAudit(supabase, user.id, "update", "transaction", editingId, null, transactionData as Record<string, unknown>);
       } else {
         // Create new transaction
-        const { error: insertError } = await supabase
+        const { data: inserted, error: insertError } = await supabase
           .from("transactions")
-          .insert([transactionData]);
+          .insert([transactionData])
+          .select("id")
+          .single();
 
         if (insertError) {
           setError(insertError.message);
           setSaving(false);
           return;
+        }
+        if (inserted) {
+          await logAudit(supabase, user.id, "create", "transaction", inserted.id, null, transactionData as Record<string, unknown>);
         }
       }
 
@@ -200,13 +219,15 @@ export default function TransactionsPage() {
         date: format(new Date(), "yyyy-MM-dd"),
         type: "expense",
         category_id: "",
+        project_id: "",
       });
       setShowForm(false);
       setEditingId(null);
       setSaving(false);
       loadData();
+      toast.success(editingId ? "Transaction updated" : "Transaction added");
     } catch (err) {
-      setError("Failed to save transaction");
+      setError(ERROR_MESSAGES.saveFailed("transaction"));
       setSaving(false);
     }
   };
@@ -218,25 +239,20 @@ export default function TransactionsPage() {
       date: transaction.date.split("T")[0],
       type: transaction.type,
       category_id: transaction.category_id.toString(),
+      project_id: transaction.project_id?.toString() || "",
     });
     setEditingId(transaction.id);
     setShowForm(true);
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this transaction?")) {
-      return;
-    }
+    if (!user) return;
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
-      if (!user) return;
-
+      // Soft delete — set is_deleted flag instead of hard delete
       const { error: deleteError } = await supabase
         .from("transactions")
-        .delete()
+        .update({ is_deleted: true })
         .eq("id", id)
         .eq("user_id", user.id);
 
@@ -245,9 +261,11 @@ export default function TransactionsPage() {
         return;
       }
 
+      await logAudit(supabase, user.id, "delete", "transaction", id);
       loadData();
+      toast.success("Transaction deleted");
     } catch (err) {
-      setError("Failed to delete transaction");
+      setError(ERROR_MESSAGES.deleteFailed("transaction"));
     }
   };
 
@@ -258,6 +276,7 @@ export default function TransactionsPage() {
       date: format(new Date(), "yyyy-MM-dd"),
       type: "expense",
       category_id: "",
+      project_id: "",
     });
     setShowForm(false);
     setEditingId(null);
@@ -269,18 +288,48 @@ export default function TransactionsPage() {
     const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
       t.categories.name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesType = filterType === "all" || t.type === filterType;
-    return matchesSearch && matchesType;
+    const matchesDateFrom = !dateFrom || t.date >= dateFrom;
+    const matchesDateTo = !dateTo || t.date <= dateTo;
+    return matchesSearch && matchesType && matchesDateFrom && matchesDateTo;
   });
 
   // Get categories for selected type
   const availableCategories = categories.filter((c) => c.type === formData.type);
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+  // Pagination
+  const totalPages = Math.ceil(filteredTransactions.length / ITEMS_PER_PAGE);
+  const paginatedTransactions = filteredTransactions.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterType, dateFrom, dateTo]);
+
+  const handleExportCSV = () => {
+    if (filteredTransactions.length === 0) return;
+    const headers = ["Date", "Description", "Category", "Type", "Amount"];
+    const rows = filteredTransactions.map((t) => [
+      t.date,
+      `"${t.description.replace(/"/g, '""')}"`,
+      t.categories.name,
+      t.type,
+      t.amount.toString(),
+    ]);
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `swiftbudget-transactions-${format(new Date(), "yyyy-MM-dd")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (authLoading || dataLoading) {
+    return <ListPageSkeleton />;
   }
 
   return (
@@ -291,10 +340,20 @@ export default function TransactionsPage() {
           <ArrowLeftRight className="h-8 w-8 text-primary" />
           <h1 className="text-3xl font-bold">Transactions</h1>
         </div>
-        <Button onClick={() => setShowForm(true)} disabled={showForm}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Transaction
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={handleExportCSV}
+            disabled={filteredTransactions.length === 0}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
+          <Button onClick={() => setShowForm(true)} disabled={showForm}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Transaction
+          </Button>
+        </div>
       </div>
 
       {/* Add/Edit Form */}
@@ -346,6 +405,7 @@ export default function TransactionsPage() {
                   id="amount"
                   type="number"
                   step="0.01"
+                  min="0.01"
                   placeholder="0.00"
                   value={formData.amount}
                   onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
@@ -387,6 +447,27 @@ export default function TransactionsPage() {
                   ))}
                 </select>
               </div>
+
+              {/* Project (Optional) */}
+              {projects.length > 0 && (
+                <div className="space-y-2">
+                  <Label htmlFor="project">Project (Optional)</Label>
+                  <select
+                    id="project"
+                    value={formData.project_id}
+                    onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
+                    disabled={saving}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="">No project</option>
+                    {projects.map((proj) => (
+                      <option key={proj.id} value={proj.id}>
+                        {proj.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Date */}
               <div className="space-y-2">
@@ -456,6 +537,38 @@ export default function TransactionsPage() {
               </Button>
             </div>
           </div>
+
+          {/* Date Range Filter */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center mt-4">
+            <div className="flex items-center gap-2">
+              <Label className="text-sm whitespace-nowrap">From:</Label>
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="w-auto"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-sm whitespace-nowrap">To:</Label>
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="w-auto"
+              />
+            </div>
+            {(dateFrom || dateTo) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setDateFrom(""); setDateTo(""); }}
+              >
+                <X className="mr-1 h-3 w-3" />
+                Clear dates
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -465,19 +578,20 @@ export default function TransactionsPage() {
           <CardTitle>All Transactions</CardTitle>
           <CardDescription>
             {filteredTransactions.length} transaction{filteredTransactions.length !== 1 ? "s" : ""}
+            {totalPages > 1 && ` — Page ${currentPage} of ${totalPages}`}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {filteredTransactions.length > 0 ? (
+          {paginatedTransactions.length > 0 ? (
             <div className="space-y-4">
-              {filteredTransactions.map((transaction) => (
+              {paginatedTransactions.map((transaction) => (
                 <div
                   key={transaction.id}
-                  className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0"
+                  className="flex flex-col gap-2 border-b pb-4 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-0"
                 >
                   <div className="flex items-center gap-3">
                     <div
-                      className={`rounded-full p-2 ${
+                      className={`rounded-full p-2 flex-shrink-0 ${
                         transaction.type === "income"
                           ? "bg-green-100 text-green-600"
                           : "bg-red-100 text-red-600"
@@ -489,15 +603,15 @@ export default function TransactionsPage() {
                         <ArrowDownRight className="h-4 w-4" />
                       )}
                     </div>
-                    <div>
-                      <p className="font-medium">{transaction.description}</p>
-                      <p className="text-sm text-muted-foreground">
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{transaction.description}</p>
+                      <p className="text-sm text-muted-foreground truncate">
                         {transaction.categories.name} •{" "}
                         {format(new Date(transaction.date), "MMM d, yyyy")}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center justify-between sm:gap-4 pl-11 sm:pl-0">
                     <div
                       className={`text-lg font-semibold ${
                         transaction.type === "income" ? "text-green-600" : "text-red-600"
@@ -506,10 +620,11 @@ export default function TransactionsPage() {
                       {transaction.type === "income" ? "+" : "-"}
                       {formatCurrency(transaction.amount)}
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-1">
                       <Button
                         variant="ghost"
                         size="icon"
+                        aria-label="Edit transaction"
                         onClick={() => handleEdit(transaction)}
                       >
                         <Pencil className="h-4 w-4" />
@@ -517,7 +632,8 @@ export default function TransactionsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => handleDelete(transaction.id)}
+                        aria-label="Delete transaction"
+                        onClick={() => setDeleteId(transaction.id)}
                       >
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
@@ -542,8 +658,46 @@ export default function TransactionsPage() {
               )}
             </div>
           )}
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t pt-4 mt-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+              >
+                <ChevronLeft className="mr-1 h-4 w-4" />
+                Previous
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+              >
+                Next
+                <ChevronRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={deleteId !== null}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        title="Delete Transaction"
+        description="Are you sure you want to delete this transaction? This action cannot be undone."
+        onConfirm={() => {
+          if (deleteId) handleDelete(deleteId);
+          setDeleteId(null);
+        }}
+      />
     </div>
   );
 }

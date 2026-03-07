@@ -15,9 +15,11 @@
 // - Conditional rendering: {condition && <JSX>} only renders if condition is true.
 // =============================================================================
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useTheme } from "next-themes";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -30,6 +32,8 @@ import {
   LogOut,
   HelpCircle,
   Mail,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
@@ -55,6 +59,9 @@ const navLinks = [
   { label: "Categories", href: "/categories", icon: Tags },
   { label: "Budget Goals", href: "/budget-goals", icon: Target },
   { label: "Projects", href: "/projects", icon: FolderKanban },
+];
+
+const secondaryLinks = [
   { label: "Help", href: "/help", icon: HelpCircle },
   { label: "Contact", href: "/contact", icon: Mail },
 ];
@@ -62,16 +69,22 @@ const navLinks = [
 export default function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
   
   // User state — stores the currently logged-in user (or null if not logged in)
-  const [user, setUser] = useState<any>(null);
+  const supabase = useMemo(() => createClient(), []);
+  const [user, setUser] = useState<SupabaseUser | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Avoid hydration mismatch for theme toggle
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Check if user is logged in when component mounts
   useEffect(() => {
-    const supabase = createClient();
-    
     // Get current user
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUser(user);
@@ -89,9 +102,34 @@ export default function Navigation() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Session timeout — auto-logout after 30 minutes of inactivity
+  useEffect(() => {
+    if (!user) return;
+
+    const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(async () => {
+        await supabase.auth.signOut();
+        router.push("/login");
+        router.refresh();
+      }, SESSION_TIMEOUT);
+    };
+
+    const events = ["mousedown", "keydown", "scroll", "touchstart"];
+    events.forEach((event) => window.addEventListener(event, resetTimer));
+    resetTimer();
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach((event) => window.removeEventListener(event, resetTimer));
+    };
+  }, [user, supabase, router]);
+
   // Handle logout
   const handleLogout = async () => {
-    const supabase = createClient();
     await supabase.auth.signOut();
     router.push("/");
     router.refresh();
@@ -132,6 +170,22 @@ export default function Navigation() {
 
         {/* User Profile / Auth Buttons */}
         <div className="flex items-center gap-2">
+          {/* Theme Toggle (always visible for logged-in users) */}
+          {mounted && user && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden md:inline-flex"
+              aria-label="Toggle theme"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            >
+              {theme === "dark" ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )}
+            </Button>
+          )}
           {loading ? (
             <div className="h-8 w-8 animate-pulse rounded-full bg-muted" />
           ) : user ? (
@@ -171,6 +225,21 @@ export default function Navigation() {
                   }
                 />
                 <DropdownMenuSeparator />
+                {secondaryLinks.map((link) => {
+                  const Icon = link.icon;
+                  return (
+                    <DropdownMenuItem
+                      key={link.href}
+                      render={
+                        <Link href={link.href} className="flex w-full items-center">
+                          <Icon className="mr-2 h-4 w-4" />
+                          {link.label}
+                        </Link>
+                      }
+                    />
+                  );
+                })}
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout}>
                   <LogOut className="mr-2 h-4 w-4" />
                   Log out
@@ -179,6 +248,20 @@ export default function Navigation() {
             </DropdownMenu>
           ) : (
             <div className="hidden md:flex items-center gap-2">
+              {mounted && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Toggle theme"
+                  onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                >
+                  {theme === "dark" ? (
+                    <Sun className="h-4 w-4" />
+                  ) : (
+                    <Moon className="h-4 w-4" />
+                  )}
+                </Button>
+              )}
               <Link
                 href="/login"
                 className="inline-flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
@@ -270,7 +353,38 @@ export default function Navigation() {
                     <User className="h-4 w-4" />
                     Profile
                   </Link>
+
+                  <Separator className="my-2" />
+
+                  {/* Help & Contact */}
+                  {secondaryLinks.map((link) => {
+                    const Icon = link.icon;
+                    return (
+                      <Link
+                        key={link.href}
+                        href={link.href}
+                        onClick={() => setOpen(false)}
+                        className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <Icon className="h-4 w-4" />
+                        {link.label}
+                      </Link>
+                    );
+                  })}
                   
+                  {/* Theme Toggle */}
+                  {mounted && (
+                    <button
+                      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                      className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    >
+                      {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                      {theme === "dark" ? "Light Mode" : "Dark Mode"}
+                    </button>
+                  )}
+
+                  <Separator className="my-2" />
+
                   {/* Logout button */}
                   <button
                     onClick={() => {

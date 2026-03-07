@@ -33,10 +33,20 @@ export default function LoginPage() {
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attempts, setAttempts] = useState(0);
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
 
   // Handle form submission
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Client-side rate limiting
+    if (lockedUntil && Date.now() < lockedUntil) {
+      const secondsLeft = Math.ceil((lockedUntil - Date.now()) / 1000);
+      setError(`Too many attempts. Please wait ${secondsLeft} seconds.`);
+      return;
+    }
+
     setError(null);
     setLoading(true);
 
@@ -50,7 +60,14 @@ export default function LoginPage() {
       });
 
       if (loginError) {
-        setError(loginError.message);
+        const newAttempts = attempts + 1;
+        setAttempts(newAttempts);
+        if (newAttempts >= 5) {
+          setLockedUntil(Date.now() + 60 * 1000);
+          setError("Too many failed attempts. Please wait 60 seconds.");
+        } else {
+          setError(loginError.message);
+        }
         setLoading(false);
         return;
       }
@@ -103,7 +120,15 @@ export default function LoginPage() {
 
             {/* Password field */}
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs text-primary hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"

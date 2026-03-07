@@ -7,8 +7,11 @@
 // =============================================================================
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase";
+import { useAuth } from "@/hooks/useAuth";
+import { logAudit } from "@/lib/audit";
+import { ERROR_MESSAGES } from "@/lib/constants";
+import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   Card,
   CardContent,
@@ -28,6 +31,7 @@ import {
   TrendingUp,
   TrendingDown,
 } from "lucide-react";
+import { ListPageSkeleton } from "@/components/page-skeleton";
 
 interface Category {
   id: number;
@@ -38,13 +42,14 @@ interface Category {
 }
 
 export default function CategoriesPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const { user, loading: authLoading, supabase } = useAuth();
+  const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; isDefault: boolean } | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -53,19 +58,12 @@ export default function CategoriesPage() {
   });
 
   useEffect(() => {
-    loadCategories();
-  }, []);
+    if (!authLoading && user) loadCategories();
+  }, [authLoading, user]);
 
   const loadCategories = async () => {
+    if (!user) return;
     try {
-      const supabase = createClient();
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        router.push("/login");
-        return;
-      }
-
       const { data, error: catError } = await supabase
         .from("categories")
         .select("*")
@@ -78,10 +76,10 @@ export default function CategoriesPage() {
         setCategories(data || []);
       }
 
-      setLoading(false);
+      setDataLoading(false);
     } catch (err) {
       console.error("Error loading categories:", err);
-      setLoading(false);
+      setDataLoading(false);
     }
   };
 
@@ -91,16 +89,31 @@ export default function CategoriesPage() {
     setSaving(true);
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-      if (!user) {
-        router.push("/login");
+      // Validate name is not whitespace-only
+      const trimmedName = formData.name.trim();
+      if (!trimmedName) {
+        setError(ERROR_MESSAGES.nameEmpty("Category"));
+        setSaving(false);
+        return;
+      }
+
+      // BUG-001 fix: Check for duplicate category name
+      const duplicate = categories.find(
+        (c) =>
+          c.name.toLowerCase() === trimmedName.toLowerCase() &&
+          c.type === formData.type &&
+          c.id !== editingId
+      );
+      if (duplicate) {
+        setError(`A ${formData.type} category named "${trimmedName}" already exists.`);
+        setSaving(false);
         return;
       }
 
       const categoryData = {
-        name: formData.name,
+        name: trimmedName,
         type: formData.type,
         user_id: user.id,
         is_default: false,
@@ -109,7 +122,7 @@ export default function CategoriesPage() {
       if (editingId) {
         const { error: updateError } = await supabase
           .from("categories")
-          .update({ name: formData.name, type: formData.type })
+          .update({ name: trimmedName, type: formData.type })
           .eq("id", editingId)
           .eq("user_id", user.id);
 
@@ -118,15 +131,21 @@ export default function CategoriesPage() {
           setSaving(false);
           return;
         }
+        await logAudit(supabase, user.id, "update", "category", editingId, null, { name: trimmedName, type: formData.type });
       } else {
-        const { error: insertError } = await supabase
+        const { data: inserted, error: insertError } = await supabase
           .from("categories")
-          .insert([categoryData]);
+          .insert([categoryData])
+          .select("id")
+          .single();
 
         if (insertError) {
           setError(insertError.message);
           setSaving(false);
           return;
+        }
+        if (inserted) {
+          await logAudit(supabase, user.id, "create", "category", inserted.id, null, categoryData);
         }
       }
 
@@ -135,8 +154,9 @@ export default function CategoriesPage() {
       setEditingId(null);
       setSaving(false);
       loadCategories();
+      toast.success(editingId ? "Category updated" : "Category added");
     } catch (err) {
-      setError("Failed to save category");
+      setError(ERROR_MESSAGES.saveFailed("category"));
       setSaving(false);
     }
   };
@@ -154,22 +174,10 @@ export default function CategoriesPage() {
     setShowForm(true);
   };
 
-  const handleDelete = async (id: number, isDefault: boolean) => {
-    if (isDefault) {
-      setError("Cannot delete default categories");
-      return;
-    }
-
-    if (!confirm("Are you sure you want to delete this category?")) {
-      return;
-    }
+  const handleDelete = async (id: number) => {
+    if (!user) return;
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
-      if (!user) return;
-
       const { error: deleteError } = await supabase
         .from("categories")
         .delete()
@@ -177,13 +185,19 @@ export default function CategoriesPage() {
         .eq("user_id", user.id);
 
       if (deleteError) {
-        setError(deleteError.message);
+        if (deleteError.message.includes("violates foreign key") || deleteError.code === "23503") {
+          setError("Cannot delete this category because it has linked transactions. Please reassign or delete those transactions first.");
+        } else {
+          setError(deleteError.message);
+        }
         return;
       }
 
+      await logAudit(supabase, user.id, "delete", "category", id);
       loadCategories();
+      toast.success("Category deleted");
     } catch (err) {
-      setError("Failed to delete category");
+      setError(ERROR_MESSAGES.deleteFailed("category"));
     }
   };
 
@@ -197,12 +211,8 @@ export default function CategoriesPage() {
   const incomeCategories = categories.filter((c) => c.type === "income");
   const expenseCategories = categories.filter((c) => c.type === "expense");
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+  if (authLoading || dataLoading) {
+    return <ListPageSkeleton />;
   }
 
   return (
@@ -323,6 +333,7 @@ export default function CategoriesPage() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        aria-label="Edit category"
                         onClick={() => handleEdit(category)}
                       >
                         <Pencil className="h-4 w-4" />
@@ -330,7 +341,8 @@ export default function CategoriesPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => handleDelete(category.id, category.is_default)}
+                        aria-label="Delete category"
+                        onClick={() => setDeleteTarget({ id: category.id, isDefault: category.is_default })}
                       >
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
@@ -378,6 +390,7 @@ export default function CategoriesPage() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        aria-label="Edit category"
                         onClick={() => handleEdit(category)}
                       >
                         <Pencil className="h-4 w-4" />
@@ -385,7 +398,8 @@ export default function CategoriesPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => handleDelete(category.id, category.is_default)}
+                        aria-label="Delete category"
+                        onClick={() => setDeleteTarget({ id: category.id, isDefault: category.is_default })}
                       >
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
@@ -402,6 +416,25 @@ export default function CategoriesPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete Category"
+        description={deleteTarget?.isDefault
+          ? "Default categories cannot be deleted."
+          : "Are you sure you want to delete this category? Transactions using it may be affected."}
+        onConfirm={() => {
+          if (deleteTarget && !deleteTarget.isDefault) {
+            handleDelete(deleteTarget.id);
+          } else if (deleteTarget?.isDefault) {
+            setError("Cannot delete default categories");
+          }
+          setDeleteTarget(null);
+        }}
+        confirmLabel={deleteTarget?.isDefault ? "OK" : "Delete"}
+      />
     </div>
   );
 }

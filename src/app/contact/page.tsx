@@ -8,7 +8,6 @@
 // =============================================================================
 
 import { useState } from "react";
-import emailjs from "@emailjs/browser";
 import {
   Card,
   CardContent,
@@ -45,32 +44,29 @@ export default function ContactPage() {
     setError(null);
 
     try {
-      // Send email using EmailJS
-      const result = await emailjs.send(
-        process.env.NEXT_PUBLIC_EMAILJS_SERVICE_ID!,
-        process.env.NEXT_PUBLIC_EMAILJS_TEMPLATE_ID!,
-        {
-          from_name: formData.name,
-          from_email: formData.email,
-          subject: formData.subject,
-          message: formData.message,
-          to_email: "keithpaul.dev@gmail.com",
-        },
-        process.env.NEXT_PUBLIC_EMAILJS_PUBLIC_KEY!
-      );
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
 
-      if (result.status === 200) {
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Failed to send message. Please try again or email us directly at keithpaul.dev@gmail.com");
         setSubmitting(false);
-        setSubmitted(true);
-
-        // Reset form after 3 seconds
-        setTimeout(() => {
-          setFormData({ name: "", email: "", subject: "", message: "" });
-          setSubmitted(false);
-        }, 3000);
+        return;
       }
-    } catch (err: any) {
-      console.error("EmailJS Error:", err);
+
+      setSubmitting(false);
+      setSubmitted(true);
+
+      // Reset form after 3 seconds
+      setTimeout(() => {
+        setFormData({ name: "", email: "", subject: "", message: "" });
+        setSubmitted(false);
+      }, 3000);
+    } catch {
       setError("Failed to send message. Please try again or email us directly at keithpaul.dev@gmail.com");
       setSubmitting(false);
     }
@@ -233,7 +229,7 @@ export default function ContactPage() {
             <CardContent className="space-y-3 text-sm">
               <div>
                 <p className="font-semibold">Email</p>
-                <p className="text-muted-foreground">support@swiftbudget.com</p>
+                <p className="text-muted-foreground">keithpaul.dev@gmail.com</p>
               </div>
               <div>
                 <p className="font-semibold">Response Time</p>

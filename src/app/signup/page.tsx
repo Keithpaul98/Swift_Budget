@@ -27,7 +27,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Wallet, Loader2 } from "lucide-react";
+import { Wallet, Loader2, Check, X } from "lucide-react";
 
 export default function SignupPage() {
   // Router for navigation after signup
@@ -49,6 +49,34 @@ export default function SignupPage() {
     setLoading(true); // Show loading spinner
 
     try {
+      // Client-side validation
+      const trimmedUsername = username.trim();
+      if (!trimmedUsername) {
+        setError("Username cannot be empty");
+        setLoading(false);
+        return;
+      }
+      if (password.length < 8) {
+        setError("Password must be at least 8 characters");
+        setLoading(false);
+        return;
+      }
+      if (!/[A-Z]/.test(password)) {
+        setError("Password must contain at least one uppercase letter");
+        setLoading(false);
+        return;
+      }
+      if (!/[a-z]/.test(password)) {
+        setError("Password must contain at least one lowercase letter");
+        setLoading(false);
+        return;
+      }
+      if (!/[0-9]/.test(password)) {
+        setError("Password must contain at least one number");
+        setLoading(false);
+        return;
+      }
+
       const supabase = createClient();
 
       // Call Supabase Auth to create a new user
@@ -57,7 +85,7 @@ export default function SignupPage() {
         password,
         options: {
           data: {
-            username, // Store username in user metadata
+            username: trimmedUsername,
           },
         },
       });
@@ -140,12 +168,34 @@ export default function SignupPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                minLength={6}
+                minLength={8}
                 disabled={loading}
               />
-              <p className="text-xs text-muted-foreground">
-                Must be at least 6 characters
-              </p>
+              {password.length > 0 && (
+                <div className="space-y-1 text-xs">
+                  <div className={`flex items-center gap-1 ${password.length >= 8 ? "text-green-600" : "text-muted-foreground"}`}>
+                    {password.length >= 8 ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                    At least 8 characters
+                  </div>
+                  <div className={`flex items-center gap-1 ${/[A-Z]/.test(password) ? "text-green-600" : "text-muted-foreground"}`}>
+                    {/[A-Z]/.test(password) ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                    One uppercase letter
+                  </div>
+                  <div className={`flex items-center gap-1 ${/[a-z]/.test(password) ? "text-green-600" : "text-muted-foreground"}`}>
+                    {/[a-z]/.test(password) ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                    One lowercase letter
+                  </div>
+                  <div className={`flex items-center gap-1 ${/[0-9]/.test(password) ? "text-green-600" : "text-muted-foreground"}`}>
+                    {/[0-9]/.test(password) ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                    One number
+                  </div>
+                </div>
+              )}
+              {password.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Must be at least 8 characters with uppercase, lowercase, and a number
+                </p>
+              )}
             </div>
           </CardContent>
           <CardFooter className="flex flex-col gap-4">

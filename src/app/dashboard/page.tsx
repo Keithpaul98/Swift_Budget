@@ -7,11 +7,11 @@
 // Uses Recharts for data visualization and Supabase for real-time data.
 // =============================================================================
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase";
 import { formatCurrency } from "@/types/database";
+import { useAuth } from "@/hooks/useAuth";
+import { CHART_COLORS } from "@/lib/constants";
 import {
   Card,
   CardContent,
@@ -20,6 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { DashboardSkeleton } from "@/components/page-skeleton";
 import {
   LayoutDashboard,
   TrendingUp,
@@ -28,8 +29,10 @@ import {
   Target,
   ArrowUpRight,
   ArrowDownRight,
-  Loader2,
   Plus,
+  ChevronLeft,
+  ChevronRight,
+  Rocket,
 } from "lucide-react";
 import {
   BarChart,
@@ -67,11 +70,10 @@ interface CategorySpending {
   amount: number;
 }
 
-const CHART_COLORS = ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"];
 
 export default function DashboardPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const { user, loading: authLoading, supabase } = useAuth();
+  const [dataLoading, setDataLoading] = useState(true);
   const [stats, setStats] = useState<DashboardStats>({
     totalIncome: 0,
     totalExpenses: 0,
@@ -80,58 +82,43 @@ export default function DashboardPage() {
   });
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [categorySpending, setCategorySpending] = useState<CategorySpending[]>([]);
-  const [monthlyData, setMonthlyData] = useState<any[]>([]);
+  const [monthlyData, setMonthlyData] = useState<{ month: string; income: number; expenses: number }[]>([]);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [isCurrentMonth, setIsCurrentMonth] = useState(true);
 
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
-
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async (dateForMonth: Date) => {
+    if (!user) return;
+    setDataLoading(true);
     try {
-      const supabase = createClient();
 
-      // Check if user is authenticated
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      
-      if (userError || !user) {
-        router.push("/login");
-        return;
-      }
+      // Get selected month date range
+      const startDate = startOfMonth(dateForMonth);
+      const endDate = endOfMonth(dateForMonth);
+      setIsCurrentMonth(
+        startDate.getMonth() === new Date().getMonth() &&
+        startDate.getFullYear() === new Date().getFullYear()
+      );
 
-      // Get current month date range
-      const startDate = startOfMonth(new Date());
-      const endDate = endOfMonth(new Date());
-
-      // Fetch transactions for current month
+      // Fetch transactions for current month (with category join — no N+1)
       const { data: transactions, error: transError } = await supabase
         .from("transactions")
-        .select("*")
+        .select("*, categories(name)")
         .eq("user_id", user.id)
+        .eq("is_deleted", false)
         .gte("date", startDate.toISOString())
         .lte("date", endDate.toISOString())
         .order("date", { ascending: false });
 
       if (transError) {
         console.error("Error fetching transactions:", transError);
-        setLoading(false);
+        setDataLoading(false);
         return;
       }
 
-      // Fetch category names for transactions
-      const transactionsWithCategories = await Promise.all(
-        (transactions || []).map(async (t: any) => {
-          const { data: category } = await supabase
-            .from("categories")
-            .select("name")
-            .eq("id", t.category_id)
-            .single();
-          
-          return {
-            ...t,
-            categories: { name: category?.name || "Uncategorized" },
-          };
-        })
-      );
+      const transactionsWithCategories = (transactions || []).map((t) => ({
+        ...t,
+        categories: { name: t.categories?.name || "Uncategorized" },
+      }));
 
       // Calculate stats
       const income = transactions
@@ -145,12 +132,13 @@ export default function DashboardPage() {
       // Fetch budget goals for current month
       const { data: budgets } = await supabase
         .from("budget_goals")
-        .select("target_amount")
+        .select("amount")
         .eq("user_id", user.id)
-        .gte("start_date", startDate.toISOString())
-        .lte("end_date", endDate.toISOString());
+        .eq("is_active", true)
+        .lte("start_date", endDate.toISOString())
+        .gte("end_date", startDate.toISOString());
 
-      const totalBudget = budgets?.reduce((sum, b) => sum + Number(b.target_amount), 0) || 0;
+      const totalBudget = budgets?.reduce((sum, b) => sum + Number(b.amount), 0) || 0;
       const budgetUsedPercent = totalBudget > 0 ? (expenses / totalBudget) * 100 : 0;
 
       setStats({
@@ -161,7 +149,7 @@ export default function DashboardPage() {
       });
 
       // Format recent transactions
-      const formattedTransactions = transactionsWithCategories.slice(0, 5).map((t: any) => ({
+      const formattedTransactions = transactionsWithCategories.slice(0, 5).map((t) => ({
         id: t.id,
         amount: Number(t.amount),
         description: t.description,
@@ -176,7 +164,7 @@ export default function DashboardPage() {
       const categoryMap = new Map<string, number>();
       transactionsWithCategories
         .filter((t) => t.type === "expense")
-        .forEach((t: any) => {
+        .forEach((t) => {
           const category = t.categories.name;
           categoryMap.set(category, (categoryMap.get(category) || 0) + Number(t.amount));
         });
@@ -188,26 +176,34 @@ export default function DashboardPage() {
 
       setCategorySpending(categoryData);
 
-      // Get last 6 months data for trend chart
+      // Get last 6 months data for trend chart (single query instead of 6)
+      const sixMonthsAgo = startOfMonth(subMonths(new Date(), 5));
+      const { data: allMonthTrans } = await supabase
+        .from("transactions")
+        .select("amount, type, date")
+        .eq("user_id", user.id)
+        .eq("is_deleted", false)
+        .gte("date", sixMonthsAgo.toISOString())
+        .lte("date", endDate.toISOString());
+
+      // Group by month client-side
       const monthlyStats = [];
       for (let i = 5; i >= 0; i--) {
         const monthStart = startOfMonth(subMonths(new Date(), i));
         const monthEnd = endOfMonth(subMonths(new Date(), i));
 
-        const { data: monthTrans } = await supabase
-          .from("transactions")
-          .select("amount, type")
-          .eq("user_id", user.id)
-          .gte("date", monthStart.toISOString())
-          .lte("date", monthEnd.toISOString());
+        const monthTrans = (allMonthTrans || []).filter((t) => {
+          const d = new Date(t.date);
+          return d >= monthStart && d <= monthEnd;
+        });
 
         const monthIncome = monthTrans
-          ?.filter((t) => t.type === "income")
-          .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+          .filter((t) => t.type === "income")
+          .reduce((sum, t) => sum + Number(t.amount), 0);
 
         const monthExpenses = monthTrans
-          ?.filter((t) => t.type === "expense")
-          .reduce((sum, t) => sum + Number(t.amount), 0) || 0;
+          .filter((t) => t.type === "expense")
+          .reduce((sum, t) => sum + Number(t.amount), 0);
 
         monthlyStats.push({
           month: format(monthStart, "MMM"),
@@ -217,32 +213,67 @@ export default function DashboardPage() {
       }
 
       setMonthlyData(monthlyStats);
-      setLoading(false);
+      setDataLoading(false);
     } catch (err) {
       console.error("Error loading dashboard:", err);
-      setLoading(false);
+      setDataLoading(false);
     }
-  };
+  }, [user, supabase]);
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+  useEffect(() => {
+    if (!authLoading && user) loadDashboardData(selectedDate);
+  }, [authLoading, user, selectedDate, loadDashboardData]);
+
+  if (authLoading || dataLoading) {
+    return <DashboardSkeleton />;
   }
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Header */}
+      {/* Header with Month Navigation */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <LayoutDashboard className="h-8 w-8 text-primary" />
           <div>
             <h1 className="text-3xl font-bold">Dashboard</h1>
-            <p className="text-sm text-muted-foreground">
-              {format(new Date(), "MMMM yyyy")}
-            </p>
+            <div className="flex items-center gap-2 mt-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                aria-label="Previous month"
+                onClick={() => setSelectedDate((prev) => subMonths(prev, 1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <p className="text-sm font-medium text-muted-foreground min-w-[120px] text-center">
+                {format(selectedDate, "MMMM yyyy")}
+              </p>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                aria-label="Next month"
+                disabled={isCurrentMonth}
+                onClick={() => setSelectedDate((prev) => {
+                  const next = new Date(prev);
+                  next.setMonth(next.getMonth() + 1);
+                  return next;
+                })}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              {!isCurrentMonth && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-xs"
+                  onClick={() => setSelectedDate(new Date())}
+                >
+                  Today
+                </Button>
+              )}
+            </div>
           </div>
         </div>
         <Link href="/transactions">
@@ -252,6 +283,27 @@ export default function DashboardPage() {
           </Button>
         </Link>
       </div>
+
+      {/* Onboarding Card for New Users */}
+      {recentTransactions.length === 0 && isCurrentMonth && (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardContent className="flex items-center gap-4 py-4">
+            <Rocket className="h-8 w-8 text-primary flex-shrink-0" />
+            <div>
+              <p className="font-medium">Welcome to SwiftBudget!</p>
+              <p className="text-sm text-muted-foreground">
+                Start by adding your first transaction, setting up categories, or creating a budget goal.
+              </p>
+            </div>
+            <Link href="/transactions" className="ml-auto flex-shrink-0">
+              <Button size="sm">
+                <Plus className="mr-1 h-4 w-4" />
+                Get Started
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -7,9 +7,12 @@
 // =============================================================================
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase";
 import { formatCurrency } from "@/types/database";
+import { useAuth } from "@/hooks/useAuth";
+import { logAudit } from "@/lib/audit";
+import { ERROR_MESSAGES } from "@/lib/constants";
+import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   Card,
   CardContent,
@@ -25,8 +28,10 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Search,
   Loader2,
 } from "lucide-react";
+import { GridPageSkeleton } from "@/components/page-skeleton";
 
 interface Project {
   id: number;
@@ -39,13 +44,15 @@ interface Project {
 }
 
 export default function ProjectsPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const { user, loading: authLoading, supabase } = useAuth();
+  const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [formData, setFormData] = useState({
     name: "",
@@ -54,19 +61,12 @@ export default function ProjectsPage() {
   });
 
   useEffect(() => {
-    loadProjects();
-  }, []);
+    if (!authLoading && user) loadProjects();
+  }, [authLoading, user]);
 
   const loadProjects = async () => {
+    if (!user) return;
     try {
-      const supabase = createClient();
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        router.push("/login");
-        return;
-      }
-
       const { data: projectsData, error: projectsError } = await supabase
         .from("projects")
         .select("*")
@@ -76,33 +76,36 @@ export default function ProjectsPage() {
       if (projectsError) {
         console.error("Error fetching projects:", projectsError);
       } else {
-        // Fetch transaction stats for each project
-        const projectsWithStats = await Promise.all(
-          (projectsData || []).map(async (project: any) => {
-            const { data: transactions } = await supabase
-              .from("transactions")
-              .select("amount")
-              .eq("user_id", user.id)
-              .eq("project_id", project.id);
+        // Batch-fetch ALL project transactions in one query (fixes N+1)
+        const { data: allTransactions } = await supabase
+          .from("transactions")
+          .select("amount, project_id")
+          .eq("user_id", user.id)
+          .eq("is_deleted", false)
+          .not("project_id", "is", null);
 
-            const totalSpent = transactions?.reduce((sum, t) => sum + Number(t.amount), 0) || 0;
-            const transactionCount = transactions?.length || 0;
+        // Group transaction stats by project_id client-side
+        const statsMap = new Map<number, { total: number; count: number }>();
+        (allTransactions || []).forEach((t) => {
+          const existing = statsMap.get(t.project_id) || { total: 0, count: 0 };
+          existing.total += Number(t.amount);
+          existing.count += 1;
+          statsMap.set(t.project_id, existing);
+        });
 
-            return {
-              ...project,
-              total_spent: totalSpent,
-              transaction_count: transactionCount,
-            };
-          })
-        );
+        const projectsWithStats = (projectsData || []).map((project: Project) => ({
+          ...project,
+          total_spent: statsMap.get(project.id)?.total || 0,
+          transaction_count: statsMap.get(project.id)?.count || 0,
+        }));
 
         setProjects(projectsWithStats);
       }
 
-      setLoading(false);
+      setDataLoading(false);
     } catch (err) {
       console.error("Error loading projects:", err);
-      setLoading(false);
+      setDataLoading(false);
     }
   };
 
@@ -112,19 +115,28 @@ export default function ProjectsPage() {
     setSaving(true);
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-      if (!user) {
-        router.push("/login");
+      // Validate name
+      const trimmedName = formData.name.trim();
+      if (!trimmedName) {
+        setError(ERROR_MESSAGES.nameEmpty("Project"));
+        setSaving(false);
+        return;
+      }
+
+      const budgetValue = formData.budget ? parseFloat(formData.budget) : null;
+      if (budgetValue !== null && budgetValue <= 0) {
+        setError(ERROR_MESSAGES.budgetPositive);
+        setSaving(false);
         return;
       }
 
       const projectData = {
         user_id: user.id,
-        name: formData.name,
-        description: formData.description || null,
-        budget: formData.budget ? parseFloat(formData.budget) : null,
+        name: trimmedName,
+        description: formData.description.trim() || null,
+        budget: budgetValue,
         is_active: true,
       };
 
@@ -140,15 +152,21 @@ export default function ProjectsPage() {
           setSaving(false);
           return;
         }
+        await logAudit(supabase, user.id, "update", "project", editingId, null, projectData as Record<string, unknown>);
       } else {
-        const { error: insertError } = await supabase
+        const { data: inserted, error: insertError } = await supabase
           .from("projects")
-          .insert([projectData]);
+          .insert([projectData])
+          .select("id")
+          .single();
 
         if (insertError) {
           setError(insertError.message);
           setSaving(false);
           return;
+        }
+        if (inserted) {
+          await logAudit(supabase, user.id, "create", "project", inserted.id, null, projectData as Record<string, unknown>);
         }
       }
 
@@ -157,8 +175,9 @@ export default function ProjectsPage() {
       setEditingId(null);
       setSaving(false);
       loadProjects();
+      toast.success(editingId ? "Project updated" : "Project added");
     } catch (err) {
-      setError("Failed to save project");
+      setError(ERROR_MESSAGES.saveFailed("project"));
       setSaving(false);
     }
   };
@@ -174,15 +193,15 @@ export default function ProjectsPage() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this project? Transactions will not be deleted, but will be unlinked from this project.")) {
-      return;
-    }
+    if (!user) return;
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
-      if (!user) return;
+      // BUG-005 fix: Unlink transactions before deleting project
+      await supabase
+        .from("transactions")
+        .update({ project_id: null })
+        .eq("project_id", id)
+        .eq("user_id", user.id);
 
       const { error: deleteError } = await supabase
         .from("projects")
@@ -195,9 +214,11 @@ export default function ProjectsPage() {
         return;
       }
 
+      await logAudit(supabase, user.id, "delete", "project", id);
       loadProjects();
+      toast.success("Project deleted");
     } catch (err) {
-      setError("Failed to delete project");
+      setError(ERROR_MESSAGES.deleteFailed("project"));
     }
   };
 
@@ -208,12 +229,13 @@ export default function ProjectsPage() {
     setError(null);
   };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+  const filteredProjects = projects.filter((p) =>
+    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (p.description || "").toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  if (authLoading || dataLoading) {
+    return <GridPageSkeleton />;
   }
 
   return (
@@ -228,6 +250,19 @@ export default function ProjectsPage() {
           Add Project
         </Button>
       </div>
+
+      {/* Search */}
+      {projects.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search projects..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+      )}
 
       {showForm && (
         <Card>
@@ -298,7 +333,7 @@ export default function ProjectsPage() {
       )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {projects.map((project) => (
+        {filteredProjects.map((project) => (
           <Card key={project.id}>
             <CardHeader>
               <div className="flex items-start justify-between">
@@ -314,10 +349,10 @@ export default function ProjectsPage() {
                   </div>
                 </div>
                 <div className="flex gap-1">
-                  <Button variant="ghost" size="icon" onClick={() => handleEdit(project)}>
+                  <Button variant="ghost" size="icon" aria-label="Edit project" onClick={() => handleEdit(project)}>
                     <Pencil className="h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={() => handleDelete(project.id)}>
+                  <Button variant="ghost" size="icon" aria-label="Delete project" onClick={() => setDeleteId(project.id)}>
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
                 </div>
@@ -357,7 +392,7 @@ export default function ProjectsPage() {
           </Card>
         ))}
 
-        {projects.length === 0 && (
+        {filteredProjects.length === 0 && !searchTerm && projects.length === 0 && (
           <Card className="md:col-span-2 lg:col-span-3">
             <CardContent className="flex flex-col items-center justify-center py-12 text-center">
               <FolderKanban className="h-12 w-12 text-muted-foreground/50" />
@@ -370,6 +405,18 @@ export default function ProjectsPage() {
           </Card>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={deleteId !== null}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        title="Delete Project"
+        description="Are you sure you want to delete this project? Transactions will not be deleted, but will be unlinked from this project."
+        onConfirm={() => {
+          if (deleteId) handleDelete(deleteId);
+          setDeleteId(null);
+        }}
+      />
     </div>
   );
 }
