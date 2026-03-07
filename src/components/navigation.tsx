@@ -40,6 +40,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuGroup,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -144,16 +145,18 @@ export default function Navigation() {
                 }
               />
               <DropdownMenuContent align="end">
-                <DropdownMenuLabel>
-                  <div className="flex flex-col">
-                    <span className="font-medium">
-                      {user.user_metadata?.username || "User"}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {user.email}
-                    </span>
-                  </div>
-                </DropdownMenuLabel>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>
+                    <div className="flex flex-col">
+                      <span className="font-medium">
+                        {user.user_metadata?.username || "User"}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {user.email}
+                      </span>
+                    </div>
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   render={
