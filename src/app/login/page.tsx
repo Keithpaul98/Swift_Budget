@@ -66,7 +66,14 @@ export default function LoginPage() {
           setLockedUntil(Date.now() + 60 * 1000);
           setError("Too many failed attempts. Please wait 60 seconds.");
         } else {
-          setError(loginError.message);
+          // Provide helpful error messages
+          if (loginError.message.includes("Email not confirmed")) {
+            setError("Please confirm your email before logging in. Check your inbox for the confirmation link.");
+          } else if (loginError.message.includes("Invalid login credentials")) {
+            setError("Invalid email or password. Please check your credentials and try again.");
+          } else {
+            setError(loginError.message);
+          }
         }
         setLoading(false);
         return;
