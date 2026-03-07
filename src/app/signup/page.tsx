@@ -18,6 +18,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import {
   Card,
@@ -97,10 +98,27 @@ export default function SignupPage() {
         return;
       }
 
-      // Success! Redirect to dashboard
-      // Note: Supabase may require email confirmation depending on your settings
+      // Success! Check if email confirmation is required
       if (data.user) {
-        router.push("/dashboard");
+        // Check if user needs to confirm email
+        if (data.user.identities && data.user.identities.length === 0) {
+          // Email already exists
+          setError("An account with this email already exists");
+          setLoading(false);
+          return;
+        }
+
+        // Check if email confirmation is required
+        if (data.user.confirmed_at) {
+          // Email already confirmed (auto-confirm enabled)
+          toast.success("Account created successfully!");
+          router.push("/dashboard");
+        } else {
+          // Email confirmation required
+          toast.success("Account created! Please check your email to confirm your account.");
+          setLoading(false);
+          // Don't redirect - show message to check email
+        }
       }
     } catch (err) {
       // Catch any unexpected errors
