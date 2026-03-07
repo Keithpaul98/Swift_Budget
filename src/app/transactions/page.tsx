@@ -98,24 +98,30 @@ export default function TransactionsPage() {
 
       if (transError) {
         console.error("Error fetching transactions:", transError);
+        console.error("Error details:", JSON.stringify(transError, null, 2));
         setTransactions([]);
-      } else if (transData) {
-        // Fetch category names separately
-        const transWithCategories = await Promise.all(
-          transData.map(async (t: any) => {
-            const { data: category } = await supabase
-              .from("categories")
-              .select("name")
-              .eq("id", t.category_id)
-              .single();
-            
-            return {
-              ...t,
-              categories: { name: category?.name || "Uncategorized" },
-            };
-          })
-        );
-        setTransactions(transWithCategories);
+      } else {
+        // Handle empty data
+        if (!transData || transData.length === 0) {
+          setTransactions([]);
+        } else {
+          // Fetch category names separately
+          const transWithCategories = await Promise.all(
+            transData.map(async (t: any) => {
+              const { data: category } = await supabase
+                .from("categories")
+                .select("name")
+                .eq("id", t.category_id)
+                .single();
+              
+              return {
+                ...t,
+                categories: { name: category?.name || "Uncategorized" },
+              };
+            })
+          );
+          setTransactions(transWithCategories);
+        }
       }
 
       // Fetch categories
