@@ -105,17 +105,7 @@ export default function DashboardPage() {
       // Fetch transactions for current month
       const { data: transactions, error: transError } = await supabase
         .from("transactions")
-        .select(`
-          id,
-          amount,
-          description,
-          transaction_date,
-          type,
-          category_id,
-          categories!inner (
-            name
-          )
-        `)
+        .select("*")
         .eq("user_id", user.id)
         .gte("transaction_date", startDate.toISOString())
         .lte("transaction_date", endDate.toISOString())
@@ -126,6 +116,22 @@ export default function DashboardPage() {
         setLoading(false);
         return;
       }
+
+      // Fetch category names for transactions
+      const transactionsWithCategories = await Promise.all(
+        (transactions || []).map(async (t: any) => {
+          const { data: category } = await supabase
+            .from("categories")
+            .select("name")
+            .eq("id", t.category_id)
+            .single();
+          
+          return {
+            ...t,
+            categories: { name: category?.name || "Uncategorized" },
+          };
+        })
+      );
 
       // Calculate stats
       const income = transactions
@@ -155,23 +161,23 @@ export default function DashboardPage() {
       });
 
       // Format recent transactions
-      const formattedTransactions = transactions?.slice(0, 5).map((t: any) => ({
+      const formattedTransactions = transactionsWithCategories.slice(0, 5).map((t: any) => ({
         id: t.id,
         amount: Number(t.amount),
         description: t.description,
         transaction_date: t.transaction_date,
         type: t.type,
-        category_name: t.categories?.name || "Uncategorized",
-      })) || [];
+        category_name: t.categories.name,
+      }));
 
       setRecentTransactions(formattedTransactions);
 
       // Calculate category spending (expenses only)
       const categoryMap = new Map<string, number>();
-      transactions
-        ?.filter((t) => t.type === "expense")
+      transactionsWithCategories
+        .filter((t) => t.type === "expense")
         .forEach((t: any) => {
-          const category = t.categories?.name || "Uncategorized";
+          const category = t.categories.name;
           categoryMap.set(category, (categoryMap.get(category) || 0) + Number(t.amount));
         });
 
