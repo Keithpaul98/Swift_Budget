@@ -111,7 +111,10 @@ export default function DashboardPage() {
           description,
           transaction_date,
           type,
-          categories (name)
+          category_id,
+          categories!inner (
+            name
+          )
         `)
         .eq("user_id", user.id)
         .gte("transaction_date", startDate.toISOString())
