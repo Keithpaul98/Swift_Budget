@@ -1,36 +1,122 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SwiftBudget
+
+A modern personal finance tracker built with Next.js and Supabase. Track income, expenses, budget goals, and projects — all in Malawi Kwacha (MK).
+
+> **Migration in Progress:** This is a rebuild of the original [SwiftBudget Flask app](https://github.com/Keithpaul98/SwiftBudget) using modern web technologies for better performance and easier deployment.
+
+## Features
+
+- ✅ **User Authentication** — Secure signup/login with Supabase Auth
+- ✅ **Transaction Management** — Track income and expenses with categories
+- ✅ **Budget Goals** — Set spending limits and get alerts
+- ✅ **Projects/Tags** — Group related transactions
+- ✅ **Visual Dashboard** — Charts and statistics
+- ✅ **Profile Management** — Upload profile images, manage settings
+- ✅ **MK Currency** — Designed for Malawi Kwacha
+
+## Tech Stack
+
+- **Framework:** Next.js 16 (React 19, TypeScript)
+- **Database:** Supabase PostgreSQL
+- **Authentication:** Supabase Auth
+- **Storage:** Supabase Storage
+- **Styling:** Tailwind CSS v4 + shadcn/ui
+- **Charts:** Recharts
+- **Deployment:** Netlify
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Node.js 22+ and npm
+- A [Supabase](https://supabase.com) account (free tier works)
+
+### Installation
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/swiftbudget-nextjs.git
+   cd swiftbudget-nextjs
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Set up Supabase:**
+   - Go to [supabase.com](https://supabase.com) and create a new project
+   - Copy your Project URL and anon key from Settings → API
+   - Create a `.env.local` file:
+     ```env
+     NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+     NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+     NEXT_PUBLIC_CURRENCY_SYMBOL=MK
+     NEXT_PUBLIC_CURRENCY_CODE=MWK
+     ```
+
+4. **Run database migrations:**
+   - Go to your Supabase project → SQL Editor
+   - Copy the contents of `supabase/migrations/001_initial_schema.sql`
+   - Paste and click "Run"
+
+5. **Start the development server:**
+   ```bash
+   npm run dev
+   ```
+
+6. **Open [http://localhost:3000](http://localhost:3000)**
+
+## Project Structure
+
+```
+swiftbudget/
+├── src/
+│   ├── app/              # Next.js app router pages
+│   ├── components/       # React components
+│   ├── lib/              # Utilities (Supabase clients)
+│   ├── types/            # TypeScript type definitions
+│   └── middleware.ts     # Auth route protection
+├── supabase/
+│   └── migrations/       # Database schema
+├── netlify.toml          # Netlify deployment config
+└── .env.local            # Environment variables (not in git)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Development Status
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**Phase 1: Project Setup** ✅ Complete
+- Next.js project with TypeScript
+- Supabase integration
+- Database schema with RLS
+- Navigation and layout
+- Placeholder pages
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Phase 2: Authentication** 🚧 In Progress
+- Signup/login pages
+- Session management
+- Protected routes
 
-## Learn More
+**Phase 3-8:** Coming soon (see `NEXTJS_MIGRATION_GUIDE.md`)
 
-To learn more about Next.js, take a look at the following resources:
+## Deployment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Deploy to Netlify:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run build
+```
 
-## Deploy on Vercel
+Or connect your GitHub repo to Netlify for automatic deployments.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Contributing
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This is a personal learning project, but suggestions and feedback are welcome!
+
+## License
+
+MIT
+
+## Original Project
+
+This is a migration of the [SwiftBudget Flask application](https://github.com/Keithpaul98/SwiftBudget) to Next.js for improved performance and deployment options.

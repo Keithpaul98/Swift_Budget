@@ -1,0 +1,14 @@
+# =============================================================================
+# Netlify Configuration for SwiftBudget
+# =============================================================================
+# This file tells Netlify how to build and deploy your Next.js app.
+# Netlify has built-in Next.js support via @netlify/plugin-nextjs.
+# =============================================================================
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+# The Next.js plugin handles server-side rendering, API routes, and middleware
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
