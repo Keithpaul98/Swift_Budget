@@ -57,7 +57,7 @@ interface Transaction {
   id: number;
   amount: number;
   description: string;
-  transaction_date: string;
+  date: string;
   type: "income" | "expense";
   category_name: string;
 }
@@ -107,9 +107,9 @@ export default function DashboardPage() {
         .from("transactions")
         .select("*")
         .eq("user_id", user.id)
-        .gte("transaction_date", startDate.toISOString())
-        .lte("transaction_date", endDate.toISOString())
-        .order("transaction_date", { ascending: false });
+        .gte("date", startDate.toISOString())
+        .lte("date", endDate.toISOString())
+        .order("date", { ascending: false });
 
       if (transError) {
         console.error("Error fetching transactions:", transError);
@@ -165,7 +165,7 @@ export default function DashboardPage() {
         id: t.id,
         amount: Number(t.amount),
         description: t.description,
-        transaction_date: t.transaction_date,
+        date: t.date,
         type: t.type,
         category_name: t.categories.name,
       }));
@@ -198,8 +198,8 @@ export default function DashboardPage() {
           .from("transactions")
           .select("amount, type")
           .eq("user_id", user.id)
-          .gte("transaction_date", monthStart.toISOString())
-          .lte("transaction_date", monthEnd.toISOString());
+          .gte("date", monthStart.toISOString())
+          .lte("date", monthEnd.toISOString());
 
         const monthIncome = monthTrans
           ?.filter((t) => t.type === "income")
@@ -406,7 +406,7 @@ export default function DashboardPage() {
                       <p className="font-medium">{transaction.description}</p>
                       <p className="text-sm text-muted-foreground">
                         {transaction.category_name} •{" "}
-                        {format(new Date(transaction.transaction_date), "MMM d, yyyy")}
+                        {format(new Date(transaction.date), "MMM d, yyyy")}
                       </p>
                     </div>
                   </div>

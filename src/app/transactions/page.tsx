@@ -39,7 +39,7 @@ interface Transaction {
   id: number;
   amount: number;
   description: string;
-  transaction_date: string;
+  date: string;
   type: "income" | "expense";
   category_id: number;
   project_id: number | null;
@@ -70,7 +70,7 @@ export default function TransactionsPage() {
   const [formData, setFormData] = useState({
     amount: "",
     description: "",
-    transaction_date: format(new Date(), "yyyy-MM-dd"),
+    date: format(new Date(), "yyyy-MM-dd"),
     type: "expense" as "income" | "expense",
     category_id: "",
   });
@@ -94,7 +94,7 @@ export default function TransactionsPage() {
         .from("transactions")
         .select("*")
         .eq("user_id", user.id)
-        .order("transaction_date", { ascending: false });
+        .order("date", { ascending: false });
 
       if (transError) {
         console.error("Error fetching transactions:", transError);
@@ -162,7 +162,7 @@ export default function TransactionsPage() {
         user_id: user.id,
         amount: parseFloat(formData.amount),
         description: formData.description,
-        transaction_date: formData.transaction_date,
+        date: formData.date,
         type: formData.type,
         category_id: parseInt(formData.category_id),
       };
@@ -197,7 +197,7 @@ export default function TransactionsPage() {
       setFormData({
         amount: "",
         description: "",
-        transaction_date: format(new Date(), "yyyy-MM-dd"),
+        date: format(new Date(), "yyyy-MM-dd"),
         type: "expense",
         category_id: "",
       });
@@ -215,7 +215,7 @@ export default function TransactionsPage() {
     setFormData({
       amount: transaction.amount.toString(),
       description: transaction.description,
-      transaction_date: transaction.transaction_date.split("T")[0],
+      date: transaction.date.split("T")[0],
       type: transaction.type,
       category_id: transaction.category_id.toString(),
     });
@@ -255,7 +255,7 @@ export default function TransactionsPage() {
     setFormData({
       amount: "",
       description: "",
-      transaction_date: format(new Date(), "yyyy-MM-dd"),
+      date: format(new Date(), "yyyy-MM-dd"),
       type: "expense",
       category_id: "",
     });
@@ -394,8 +394,8 @@ export default function TransactionsPage() {
                 <Input
                   id="date"
                   type="date"
-                  value={formData.transaction_date}
-                  onChange={(e) => setFormData({ ...formData, transaction_date: e.target.value })}
+                  value={formData.date}
+                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                   required
                   disabled={saving}
                 />
@@ -493,7 +493,7 @@ export default function TransactionsPage() {
                       <p className="font-medium">{transaction.description}</p>
                       <p className="text-sm text-muted-foreground">
                         {transaction.categories.name} •{" "}
-                        {format(new Date(transaction.transaction_date), "MMM d, yyyy")}
+                        {format(new Date(transaction.date), "MMM d, yyyy")}
                       </p>
                     </div>
                   </div>
