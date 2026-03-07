@@ -28,6 +28,8 @@ import {
   Wallet,
   User,
   LogOut,
+  HelpCircle,
+  Mail,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
@@ -53,6 +55,8 @@ const navLinks = [
   { label: "Categories", href: "/categories", icon: Tags },
   { label: "Budget Goals", href: "/budget-goals", icon: Target },
   { label: "Projects", href: "/projects", icon: FolderKanban },
+  { label: "Help", href: "/help", icon: HelpCircle },
+  { label: "Contact", href: "/contact", icon: Mail },
 ];
 
 export default function Navigation() {
