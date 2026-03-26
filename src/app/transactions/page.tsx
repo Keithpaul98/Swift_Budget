@@ -39,6 +39,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  SlidersHorizontal,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -82,6 +83,7 @@ export default function TransactionsPage() {
   const [dateTo, setDateTo] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -335,23 +337,32 @@ export default function TransactionsPage() {
   return (
     <div className="flex flex-col gap-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <ArrowLeftRight className="h-8 w-8 text-primary" />
-          <h1 className="text-3xl font-bold">Transactions</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">Transactions</h1>
         </div>
         <div className="flex gap-2">
           <Button
             variant="outline"
+            size="sm"
             onClick={handleExportCSV}
             disabled={filteredTransactions.length === 0}
           >
-            <Download className="mr-2 h-4 w-4" />
-            Export CSV
+            <Download className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Export CSV</span>
           </Button>
-          <Button onClick={() => setShowForm(true)} disabled={showForm}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Transaction
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowFilters(!showFilters)}
+            className="sm:hidden"
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+          </Button>
+          <Button size="sm" onClick={() => setShowForm(true)} disabled={showForm}>
+            <Plus className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Add Transaction</span>
           </Button>
         </div>
       </div>
@@ -497,80 +508,84 @@ export default function TransactionsPage() {
         </Card>
       )}
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex flex-col gap-4 sm:flex-row">
-            {/* Search */}
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search transactions..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9"
-              />
+      {/* Filters — always visible on desktop, toggled on mobile */}
+      <div className={`${showFilters ? "block" : "hidden"} sm:block`}>
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+              {/* Search */}
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search transactions..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+
+              {/* Type Filter */}
+              <div className="flex gap-2">
+                <Button
+                  variant={filterType === "all" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setFilterType("all")}
+                >
+                  All
+                </Button>
+                <Button
+                  variant={filterType === "income" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setFilterType("income")}
+                >
+                  Income
+                </Button>
+                <Button
+                  variant={filterType === "expense" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setFilterType("expense")}
+                >
+                  Expenses
+                </Button>
+              </div>
             </div>
 
-            {/* Type Filter */}
-            <div className="flex gap-2">
-              <Button
-                variant={filterType === "all" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setFilterType("all")}
-              >
-                All
-              </Button>
-              <Button
-                variant={filterType === "income" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setFilterType("income")}
-              >
-                Income
-              </Button>
-              <Button
-                variant={filterType === "expense" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setFilterType("expense")}
-              >
-                Expenses
-              </Button>
+            {/* Date Range Filter */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center mt-3">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-2">
+                <div className="flex items-center gap-1">
+                  <Label className="text-xs whitespace-nowrap">From:</Label>
+                  <Input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  <Label className="text-xs whitespace-nowrap">To:</Label>
+                  <Input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+              </div>
+              {(dateFrom || dateTo) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { setDateFrom(""); setDateTo(""); }}
+                >
+                  <X className="mr-1 h-3 w-3" />
+                  Clear
+                </Button>
+              )}
             </div>
-          </div>
-
-          {/* Date Range Filter */}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center mt-4">
-            <div className="flex items-center gap-2">
-              <Label className="text-sm whitespace-nowrap">From:</Label>
-              <Input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="w-auto"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Label className="text-sm whitespace-nowrap">To:</Label>
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="w-auto"
-              />
-            </div>
-            {(dateFrom || dateTo) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => { setDateFrom(""); setDateTo(""); }}
-              >
-                <X className="mr-1 h-3 w-3" />
-                Clear dates
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Transactions List */}
       <Card>
@@ -587,55 +602,54 @@ export default function TransactionsPage() {
               {paginatedTransactions.map((transaction) => (
                 <div
                   key={transaction.id}
-                  className="flex flex-col gap-2 border-b pb-4 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-0"
+                  className="flex items-center gap-3 border-b pb-3 last:border-0 last:pb-0"
                 >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`rounded-full p-2 flex-shrink-0 ${
-                        transaction.type === "income"
-                          ? "bg-green-100 text-green-600"
-                          : "bg-red-100 text-red-600"
-                      }`}
-                    >
-                      {transaction.type === "income" ? (
-                        <ArrowUpRight className="h-4 w-4" />
-                      ) : (
-                        <ArrowDownRight className="h-4 w-4" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{transaction.description}</p>
-                      <p className="text-sm text-muted-foreground truncate">
-                        {transaction.categories.name} •{" "}
-                        {format(new Date(transaction.date), "MMM d, yyyy")}
-                      </p>
-                    </div>
+                  <div
+                    className={`rounded-full p-2 flex-shrink-0 ${
+                      transaction.type === "income"
+                        ? "bg-green-100 text-green-600"
+                        : "bg-red-100 text-red-600"
+                    }`}
+                  >
+                    {transaction.type === "income" ? (
+                      <ArrowUpRight className="h-4 w-4" />
+                    ) : (
+                      <ArrowDownRight className="h-4 w-4" />
+                    )}
                   </div>
-                  <div className="flex items-center justify-between sm:gap-4 pl-11 sm:pl-0">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate text-sm">{transaction.description}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {transaction.categories.name} • {format(new Date(transaction.date), "MMM d, yyyy")}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <div
-                      className={`text-lg font-semibold ${
+                      className={`text-sm font-semibold whitespace-nowrap ${
                         transaction.type === "income" ? "text-green-600" : "text-red-600"
                       }`}
                     >
                       {transaction.type === "income" ? "+" : "-"}
                       {formatCurrency(transaction.amount)}
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex gap-0">
                       <Button
                         variant="ghost"
                         size="icon"
+                        className="h-7 w-7"
                         aria-label="Edit transaction"
                         onClick={() => handleEdit(transaction)}
                       >
-                        <Pencil className="h-4 w-4" />
+                        <Pencil className="h-3.5 w-3.5" />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon"
+                        className="h-7 w-7"
                         aria-label="Delete transaction"
                         onClick={() => setDeleteId(transaction.id)}
                       >
-                        <Trash2 className="h-4 w-4 text-destructive" />
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
                       </Button>
                     </div>
                   </div>
