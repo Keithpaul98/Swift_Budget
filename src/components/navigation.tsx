@@ -34,6 +34,7 @@ import {
   Mail,
   Moon,
   Sun,
+  Shield,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { ADMIN_EMAIL } from "@/lib/constants";
 
 // Define navigation links — this array drives both desktop and mobile menus.
 // Each object has a label (display text), href (URL path), and icon (Lucide icon).
@@ -224,6 +226,16 @@ export default function Navigation() {
                     </Link>
                   }
                 />
+                {user.email === ADMIN_EMAIL && (
+                  <DropdownMenuItem
+                    render={
+                      <Link href="/admin" className="flex w-full items-center">
+                        <Shield className="mr-2 h-4 w-4" />
+                        Admin
+                      </Link>
+                    }
+                  />
+                )}
                 <DropdownMenuSeparator />
                 {secondaryLinks.map((link) => {
                   const Icon = link.icon;
@@ -353,6 +365,23 @@ export default function Navigation() {
                     <User className="h-4 w-4" />
                     Profile
                   </Link>
+
+                  {/* Admin link — only for admin user */}
+                  {user.email === ADMIN_EMAIL && (
+                    <Link
+                      href="/admin"
+                      onClick={() => setOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                        pathname === "/admin"
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                      )}
+                    >
+                      <Shield className="h-4 w-4" />
+                      Admin
+                    </Link>
+                  )}
 
                   <Separator className="my-2" />
 

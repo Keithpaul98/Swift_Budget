@@ -23,6 +23,7 @@ const protectedRoutes = [
   "/budget-goals",
   "/projects",
   "/profile",
+  "/admin",
 ];
 
 // Routes only for unauthenticated users
