@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { ADMIN_EMAIL } from "@/lib/constants";
 import { formatCurrency } from "@/types/database";
@@ -25,6 +25,13 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
+  Gauge,
+  Wifi,
+  Smartphone,
+  Monitor,
+  Zap,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -69,6 +76,35 @@ interface UserActivity {
   total_expenses: number;
 }
 
+interface PerformanceMetrics {
+  // Page load timing
+  pageLoadTime: number | null;
+  domContentLoaded: number | null;
+  firstContentfulPaint: number | null;
+  largestContentfulPaint: number | null;
+  timeToInteractive: number | null;
+  // API latency
+  apiLatency: number | null;
+  apiLatencyStatus: "good" | "moderate" | "slow" | null;
+  // Connection info
+  connectionType: string;
+  effectiveType: string;
+  downlink: number | null;
+  rtt: number | null;
+  // Device
+  deviceMemory: number | null;
+  hardwareConcurrency: number;
+  isMobile: boolean;
+  userAgent: string;
+  screenSize: string;
+  // Resource stats
+  totalResources: number;
+  totalTransferSize: number;
+  jsSize: number;
+  cssSize: number;
+  imageSize: number;
+}
+
 export default function AdminPage() {
   const { user, loading: authLoading, supabase } = useAuth();
   const router = useRouter();
@@ -78,8 +114,114 @@ export default function AdminPage() {
   const [userActivity, setUserActivity] = useState<UserActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"overview" | "users" | "logs">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "users" | "logs" | "performance">("overview");
   const [expandedLog, setExpandedLog] = useState<number | null>(null);
+  const [perfMetrics, setPerfMetrics] = useState<PerformanceMetrics | null>(null);
+  const [perfLoading, setPerfLoading] = useState(false);
+
+  const collectPerformanceMetrics = useCallback(async () => {
+    setPerfLoading(true);
+    try {
+      const metrics: PerformanceMetrics = {
+        pageLoadTime: null,
+        domContentLoaded: null,
+        firstContentfulPaint: null,
+        largestContentfulPaint: null,
+        timeToInteractive: null,
+        apiLatency: null,
+        apiLatencyStatus: null,
+        connectionType: "unknown",
+        effectiveType: "unknown",
+        downlink: null,
+        rtt: null,
+        deviceMemory: null,
+        hardwareConcurrency: navigator.hardwareConcurrency || 0,
+        isMobile: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent),
+        userAgent: navigator.userAgent,
+        screenSize: `${window.screen.width}x${window.screen.height}`,
+        totalResources: 0,
+        totalTransferSize: 0,
+        jsSize: 0,
+        cssSize: 0,
+        imageSize: 0,
+      };
+
+      // Navigation timing
+      const navEntries = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+      if (navEntries.length > 0) {
+        const nav = navEntries[0];
+        metrics.pageLoadTime = Math.round(nav.loadEventEnd - nav.startTime);
+        metrics.domContentLoaded = Math.round(nav.domContentLoadedEventEnd - nav.startTime);
+        metrics.timeToInteractive = Math.round(nav.domInteractive - nav.startTime);
+      }
+
+      // Paint timing (FCP)
+      const paintEntries = performance.getEntriesByType("paint");
+      const fcp = paintEntries.find((e) => e.name === "first-contentful-paint");
+      if (fcp) metrics.firstContentfulPaint = Math.round(fcp.startTime);
+
+      // LCP via PerformanceObserver
+      try {
+        const lcpPromise = new Promise<number>((resolve) => {
+          const existingEntries = performance.getEntriesByType("largest-contentful-paint");
+          if (existingEntries.length > 0) {
+            resolve(Math.round(existingEntries[existingEntries.length - 1].startTime));
+            return;
+          }
+          // If no existing LCP, use FCP as fallback
+          resolve(metrics.firstContentfulPaint || 0);
+        });
+        metrics.largestContentfulPaint = await lcpPromise;
+      } catch {
+        // LCP not available
+      }
+
+      // API latency benchmark — measure a real Supabase round trip
+      const apiStart = performance.now();
+      await supabase.from("categories").select("id").limit(1);
+      const apiEnd = performance.now();
+      metrics.apiLatency = Math.round(apiEnd - apiStart);
+      metrics.apiLatencyStatus =
+        metrics.apiLatency < 200 ? "good" : metrics.apiLatency < 500 ? "moderate" : "slow";
+
+      // Connection info
+      const conn = (navigator as unknown as { connection?: { effectiveType?: string; type?: string; downlink?: number; rtt?: number } }).connection;
+      if (conn) {
+        metrics.connectionType = conn.type || "unknown";
+        metrics.effectiveType = conn.effectiveType || "unknown";
+        metrics.downlink = conn.downlink ?? null;
+        metrics.rtt = conn.rtt ?? null;
+      }
+
+      // Device memory
+      metrics.deviceMemory = (navigator as unknown as { deviceMemory?: number }).deviceMemory ?? null;
+
+      // Resource breakdown
+      const resources = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
+      metrics.totalResources = resources.length;
+      let totalTransfer = 0;
+      let jsSize = 0;
+      let cssSize = 0;
+      let imageSize = 0;
+      resources.forEach((r) => {
+        const size = r.transferSize || 0;
+        totalTransfer += size;
+        if (r.initiatorType === "script" || r.name.endsWith(".js")) jsSize += size;
+        else if (r.initiatorType === "css" || r.name.endsWith(".css")) cssSize += size;
+        else if (r.initiatorType === "img" || /\.(png|jpg|jpeg|gif|webp|svg|ico)/.test(r.name)) imageSize += size;
+      });
+      metrics.totalTransferSize = totalTransfer;
+      metrics.jsSize = jsSize;
+      metrics.cssSize = cssSize;
+      metrics.imageSize = imageSize;
+
+      setPerfMetrics(metrics);
+    } catch (err) {
+      console.error("Performance metrics error:", err);
+    } finally {
+      setPerfLoading(false);
+    }
+  }, [supabase]);
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -91,6 +233,13 @@ export default function AdminPage() {
       loadAdminData();
     }
   }, [authLoading, user]);
+
+  // Collect perf metrics when switching to performance tab
+  useEffect(() => {
+    if (activeTab === "performance" && !perfMetrics && !perfLoading) {
+      collectPerformanceMetrics();
+    }
+  }, [activeTab, perfMetrics, perfLoading, collectPerformanceMetrics]);
 
   const loadAdminData = async () => {
     setLoading(true);
@@ -187,6 +336,14 @@ export default function AdminPage() {
         >
           <Clock className="h-4 w-4 mr-2" />
           Audit Logs
+        </Button>
+        <Button
+          variant={activeTab === "performance" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setActiveTab("performance")}
+        >
+          <Gauge className="h-4 w-4 mr-2" />
+          Performance
         </Button>
       </div>
 
@@ -450,6 +607,253 @@ export default function AdminPage() {
           </CardContent>
         </Card>
       )}
+      {/* Performance Tab */}
+      {activeTab === "performance" && (
+        <>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">Real-time client-side performance metrics from your current session.</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setPerfMetrics(null); collectPerformanceMetrics(); }}
+              disabled={perfLoading}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${perfLoading ? "animate-spin" : ""}`} />
+              Re-measure
+            </Button>
+          </div>
+
+          {perfLoading && (
+            <div className="flex items-center justify-center py-12">
+              <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          )}
+
+          {perfMetrics && (
+            <>
+              {/* Core Web Vitals */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Zap className="h-5 w-5 text-yellow-500" />
+                    Core Web Vitals & Page Load
+                  </CardTitle>
+                  <CardDescription>Key metrics that affect user experience</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    <MetricCard
+                      label="Page Load"
+                      value={perfMetrics.pageLoadTime}
+                      unit="ms"
+                      thresholds={[2000, 4000]}
+                    />
+                    <MetricCard
+                      label="DOM Content Loaded"
+                      value={perfMetrics.domContentLoaded}
+                      unit="ms"
+                      thresholds={[1500, 3000]}
+                    />
+                    <MetricCard
+                      label="First Contentful Paint"
+                      value={perfMetrics.firstContentfulPaint}
+                      unit="ms"
+                      thresholds={[1800, 3000]}
+                    />
+                    <MetricCard
+                      label="Largest Contentful Paint"
+                      value={perfMetrics.largestContentfulPaint}
+                      unit="ms"
+                      thresholds={[2500, 4000]}
+                    />
+                    <MetricCard
+                      label="Time to Interactive"
+                      value={perfMetrics.timeToInteractive}
+                      unit="ms"
+                      thresholds={[3800, 7300]}
+                    />
+                    <MetricCard
+                      label="API Latency (Supabase)"
+                      value={perfMetrics.apiLatency}
+                      unit="ms"
+                      thresholds={[200, 500]}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Network & Connection */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Wifi className="h-5 w-5 text-blue-500" />
+                    Network & Connection
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Connection Type</p>
+                      <p className="text-sm font-medium">{perfMetrics.connectionType}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Effective Type</p>
+                      <p className={`text-sm font-medium ${
+                        perfMetrics.effectiveType === "4g" ? "text-green-600" :
+                        perfMetrics.effectiveType === "3g" ? "text-yellow-600" : "text-red-600"
+                      }`}>
+                        {perfMetrics.effectiveType}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Downlink Speed</p>
+                      <p className="text-sm font-medium">
+                        {perfMetrics.downlink !== null ? `${perfMetrics.downlink} Mbps` : "N/A"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Round-Trip Time</p>
+                      <p className={`text-sm font-medium ${
+                        perfMetrics.rtt !== null && perfMetrics.rtt > 300 ? "text-red-600" :
+                        perfMetrics.rtt !== null && perfMetrics.rtt > 100 ? "text-yellow-600" : "text-green-600"
+                      }`}>
+                        {perfMetrics.rtt !== null ? `${perfMetrics.rtt} ms` : "N/A"}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Device Info */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    {perfMetrics.isMobile ? (
+                      <Smartphone className="h-5 w-5 text-purple-500" />
+                    ) : (
+                      <Monitor className="h-5 w-5 text-purple-500" />
+                    )}
+                    Device Info
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Device Type</p>
+                      <p className="text-sm font-medium">{perfMetrics.isMobile ? "Mobile" : "Desktop"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Screen</p>
+                      <p className="text-sm font-medium">{perfMetrics.screenSize}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">CPU Cores</p>
+                      <p className="text-sm font-medium">{perfMetrics.hardwareConcurrency}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Device Memory</p>
+                      <p className="text-sm font-medium">
+                        {perfMetrics.deviceMemory ? `${perfMetrics.deviceMemory} GB` : "N/A"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <p className="text-xs text-muted-foreground">User Agent</p>
+                    <p className="text-xs font-mono bg-muted p-2 rounded mt-1 break-all">
+                      {perfMetrics.userAgent}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Resource Breakdown */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Activity className="h-5 w-5 text-cyan-500" />
+                    Resource Breakdown
+                  </CardTitle>
+                  <CardDescription>Network resources loaded for this page</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Total Resources</p>
+                      <p className="text-lg font-bold">{perfMetrics.totalResources}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Total Transfer</p>
+                      <p className="text-lg font-bold">{formatBytes(perfMetrics.totalTransferSize)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">JavaScript</p>
+                      <p className="text-lg font-bold text-yellow-600">{formatBytes(perfMetrics.jsSize)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">CSS</p>
+                      <p className="text-lg font-bold text-blue-600">{formatBytes(perfMetrics.cssSize)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Images</p>
+                      <p className="text-lg font-bold text-green-600">{formatBytes(perfMetrics.imageSize)}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Helper: format bytes to human-readable
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+// Helper: metric card with color-coded thresholds
+function MetricCard({
+  label,
+  value,
+  unit,
+  thresholds,
+}: {
+  label: string;
+  value: number | null;
+  unit: string;
+  thresholds: [number, number]; // [good, moderate] — above moderate = slow
+}) {
+  if (value === null) {
+    return (
+      <div className="rounded-lg border p-3">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-lg font-bold text-muted-foreground">N/A</p>
+      </div>
+    );
+  }
+
+  const status = value <= thresholds[0] ? "good" : value <= thresholds[1] ? "moderate" : "slow";
+  const colorClass = status === "good" ? "text-green-600" : status === "moderate" ? "text-yellow-600" : "text-red-600";
+  const Icon = status === "good" ? CheckCircle2 : status === "moderate" ? AlertTriangle : AlertTriangle;
+
+  return (
+    <div className="rounded-lg border p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <div className="flex items-center gap-2 mt-1">
+        <Icon className={`h-4 w-4 ${colorClass}`} />
+        <p className={`text-lg font-bold ${colorClass}`}>
+          {value.toLocaleString()} <span className="text-xs font-normal">{unit}</span>
+        </p>
+      </div>
+      <p className={`text-xs mt-0.5 ${colorClass}`}>
+        {status === "good" ? "Good" : status === "moderate" ? "Needs improvement" : "Poor"}
+      </p>
     </div>
   );
 }
