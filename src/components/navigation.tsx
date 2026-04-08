@@ -105,11 +105,13 @@ export default function Navigation() {
   }, []);
 
   // Session timeout — auto-logout after 30 minutes of inactivity
+  // Uses debounced handler to avoid thrashing on scroll/touch events (mobile perf)
   useEffect(() => {
     if (!user) return;
 
     const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
     let timeoutId: NodeJS.Timeout;
+    let debounceId: NodeJS.Timeout;
 
     const resetTimer = () => {
       clearTimeout(timeoutId);
@@ -120,13 +122,19 @@ export default function Navigation() {
       }, SESSION_TIMEOUT);
     };
 
+    const debouncedReset = () => {
+      clearTimeout(debounceId);
+      debounceId = setTimeout(resetTimer, 1000);
+    };
+
     const events = ["mousedown", "keydown", "scroll", "touchstart"];
-    events.forEach((event) => window.addEventListener(event, resetTimer));
+    events.forEach((event) => window.addEventListener(event, debouncedReset, { passive: true }));
     resetTimer();
 
     return () => {
       clearTimeout(timeoutId);
-      events.forEach((event) => window.removeEventListener(event, resetTimer));
+      clearTimeout(debounceId);
+      events.forEach((event) => window.removeEventListener(event, debouncedReset));
     };
   }, [user, supabase, router]);
 

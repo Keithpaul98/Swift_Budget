@@ -7,7 +7,7 @@
 // Includes filters, search, and category management
 // =============================================================================
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { formatCurrency } from "@/types/database";
 import { useAuth } from "@/hooks/useAuth";
 import { logAudit } from "@/lib/audit";
@@ -72,6 +72,7 @@ export default function TransactionsPage() {
   const [dataLoading, setDataLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -84,6 +85,7 @@ export default function TransactionsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [searchDebounce, setSearchDebounce] = useState("");
 
   // Form state
   const [formData, setFormData] = useState({
@@ -95,61 +97,102 @@ export default function TransactionsPage() {
     project_id: "",
   });
 
+  // Debounce search input to avoid querying on every keystroke
   useEffect(() => {
-    if (!authLoading && user) loadData();
+    const timer = setTimeout(() => setSearchDebounce(searchTerm), 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // Load categories & projects once
+  useEffect(() => {
+    if (!authLoading && user) loadReferenceData();
   }, [authLoading, user]);
 
-  const loadData = async () => {
+  // Reload transactions when filters or page change
+  useEffect(() => {
+    if (!authLoading && user) loadTransactions();
+  }, [authLoading, user, currentPage, filterType, dateFrom, dateTo, searchDebounce]);
+
+  const loadReferenceData = async () => {
     if (!user) return;
     try {
-      // Fetch transactions with category join (no N+1 queries)
-      const { data: transData, error: transError } = await supabase
+      const [catResult, projResult] = await Promise.all([
+        supabase
+          .from("categories")
+          .select("id, name, type")
+          .or(`user_id.eq.${user.id},is_default.eq.true`)
+          .order("name"),
+        supabase
+          .from("projects")
+          .select("id, name")
+          .eq("user_id", user.id)
+          .eq("is_active", true)
+          .order("name"),
+      ]);
+
+      if (!catResult.error) setCategories(catResult.data || []);
+      setProjects(projResult.data || []);
+    } catch (err) {
+      console.error("Error loading reference data:", err);
+    }
+  };
+
+  const loadTransactions = useCallback(async () => {
+    if (!user) return;
+    setDataLoading(true);
+    try {
+      // Build query with server-side filters
+      let query = supabase
         .from("transactions")
-        .select("*, categories(name)")
+        .select("*, categories(name)", { count: "exact" })
         .eq("user_id", user.id)
-        .eq("is_deleted", false)
-        .order("date", { ascending: false });
+        .eq("is_deleted", false);
+
+      // Apply type filter server-side
+      if (filterType !== "all") {
+        query = query.eq("type", filterType);
+      }
+
+      // Apply date filters server-side
+      if (dateFrom) {
+        query = query.gte("date", dateFrom);
+      }
+      if (dateTo) {
+        query = query.lte("date", dateTo);
+      }
+
+      // Apply search server-side
+      if (searchDebounce) {
+        query = query.ilike("description", `%${searchDebounce}%`);
+      }
+
+      // Server-side pagination
+      const from = (currentPage - 1) * ITEMS_PER_PAGE;
+      const to = from + ITEMS_PER_PAGE - 1;
+
+      const { data: transData, error: transError, count } = await query
+        .order("date", { ascending: false })
+        .range(from, to);
 
       if (transError) {
         console.error("Error fetching transactions:", transError);
         setTransactions([]);
+        setTotalCount(0);
       } else {
         const formatted = (transData || []).map((t) => ({
           ...t,
           categories: { name: t.categories?.name || "Uncategorized" },
         }));
         setTransactions(formatted);
+        setTotalCount(count || 0);
       }
-
-      // Fetch categories
-      const { data: catData, error: catError } = await supabase
-        .from("categories")
-        .select("id, name, type")
-        .or(`user_id.eq.${user!.id},is_default.eq.true`)
-        .order("name");
-
-      if (catError) {
-        console.error("Error fetching categories:", catError);
-      } else {
-        setCategories(catData || []);
-      }
-
-      // Fetch projects for the project dropdown
-      const { data: projData } = await supabase
-        .from("projects")
-        .select("id, name")
-        .eq("user_id", user!.id)
-        .eq("is_active", true)
-        .order("name");
-
-      setProjects(projData || []);
 
       setDataLoading(false);
     } catch (err) {
-      console.error("Error loading data:", err);
+      console.error("Error loading transactions:", err);
       setDataLoading(false);
     }
-  };
+  }, [user, supabase, currentPage, filterType, dateFrom, dateTo, searchDebounce]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -226,7 +269,7 @@ export default function TransactionsPage() {
       setShowForm(false);
       setEditingId(null);
       setSaving(false);
-      loadData();
+      loadTransactions();
       toast.success(editingId ? "Transaction updated" : "Transaction added");
     } catch (err) {
       setError(ERROR_MESSAGES.saveFailed("transaction"));
@@ -264,7 +307,7 @@ export default function TransactionsPage() {
       }
 
       await logAudit(supabase, user.id, "delete", "transaction", id);
-      loadData();
+      loadTransactions();
       toast.success("Transaction deleted");
     } catch (err) {
       setError(ERROR_MESSAGES.deleteFailed("transaction"));
@@ -285,38 +328,36 @@ export default function TransactionsPage() {
     setError(null);
   };
 
-  // Filter transactions
-  const filteredTransactions = transactions.filter((t) => {
-    const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.categories.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = filterType === "all" || t.type === filterType;
-    const matchesDateFrom = !dateFrom || t.date >= dateFrom;
-    const matchesDateTo = !dateTo || t.date <= dateTo;
-    return matchesSearch && matchesType && matchesDateFrom && matchesDateTo;
-  });
-
   // Get categories for selected type
   const availableCategories = categories.filter((c) => c.type === formData.type);
 
-  // Pagination
-  const totalPages = Math.ceil(filteredTransactions.length / ITEMS_PER_PAGE);
-  const paginatedTransactions = filteredTransactions.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE
-  );
+  // Server-side pagination — totalCount comes from Supabase count
+  const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterType, dateFrom, dateTo]);
+  }, [searchDebounce, filterType, dateFrom, dateTo]);
 
-  const handleExportCSV = () => {
-    if (filteredTransactions.length === 0) return;
+  const handleExportCSV = async () => {
+    if (totalCount === 0) return;
+    // Fetch all matching transactions for export (not just current page)
+    let query = supabase
+      .from("transactions")
+      .select("*, categories(name)")
+      .eq("user_id", user!.id)
+      .eq("is_deleted", false);
+    if (filterType !== "all") query = query.eq("type", filterType);
+    if (dateFrom) query = query.gte("date", dateFrom);
+    if (dateTo) query = query.lte("date", dateTo);
+    if (searchDebounce) query = query.ilike("description", `%${searchDebounce}%`);
+    const { data: allTrans } = await query.order("date", { ascending: false });
+    if (!allTrans || allTrans.length === 0) return;
     const headers = ["Date", "Description", "Category", "Type", "Amount"];
-    const rows = filteredTransactions.map((t) => [
+    const rows = allTrans.map((t) => [
       t.date,
-      `"${t.description.replace(/"/g, '""')}"`,
-      t.categories.name,
+      `"${(t.description || "").replace(/"/g, '""')}"`,
+      t.categories?.name || "Uncategorized",
       t.type,
       t.amount.toString(),
     ]);
@@ -347,7 +388,7 @@ export default function TransactionsPage() {
             variant="outline"
             size="sm"
             onClick={handleExportCSV}
-            disabled={filteredTransactions.length === 0}
+            disabled={totalCount === 0}
           >
             <Download className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Export CSV</span>
@@ -592,14 +633,14 @@ export default function TransactionsPage() {
         <CardHeader>
           <CardTitle>All Transactions</CardTitle>
           <CardDescription>
-            {filteredTransactions.length} transaction{filteredTransactions.length !== 1 ? "s" : ""}
+            {totalCount} transaction{totalCount !== 1 ? "s" : ""}
             {totalPages > 1 && ` — Page ${currentPage} of ${totalPages}`}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {paginatedTransactions.length > 0 ? (
+          {transactions.length > 0 ? (
             <div className="space-y-4">
-              {paginatedTransactions.map((transaction) => (
+              {transactions.map((transaction) => (
                 <div
                   key={transaction.id}
                   className="flex items-center gap-3 border-b pb-3 last:border-0 last:pb-0"
@@ -664,7 +705,7 @@ export default function TransactionsPage() {
                   ? "No transactions match your filters"
                   : "No transactions yet"}
               </p>
-              {!showForm && !searchTerm && filterType === "all" && (
+              {!showForm && !searchDebounce && filterType === "all" && (
                 <Button className="mt-4" onClick={() => setShowForm(true)}>
                   <Plus className="mr-2 h-4 w-4" />
                   Add Your First Transaction

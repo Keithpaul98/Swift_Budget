@@ -7,11 +7,11 @@
 // Uses Recharts for data visualization and Supabase for real-time data.
 // =============================================================================
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import Link from "next/link";
 import { formatCurrency } from "@/types/database";
 import { useAuth } from "@/hooks/useAuth";
-import { CHART_COLORS } from "@/lib/constants";
+// CHART_COLORS moved to dashboard-charts component
 import {
   Card,
   CardContent,
@@ -34,19 +34,8 @@ import {
   ChevronRight,
   Rocket,
 } from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
+// Lazy-load Recharts — it's ~200KB and slow on mobile CPUs
+const LazyCharts = lazy(() => import("@/components/dashboard-charts"));
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
 
 interface DashboardStats {
@@ -358,64 +347,15 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Charts Row */}
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* Income vs Expenses Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Income vs Expenses</CardTitle>
-            <CardDescription>Last 6 months trend</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={monthlyData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis />
-                <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-                <Legend />
-                <Bar dataKey="income" fill="#10b981" name="Income" />
-                <Bar dataKey="expenses" fill="#ef4444" name="Expenses" />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Category Spending Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Spending by Category</CardTitle>
-            <CardDescription>Top categories this month</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {categorySpending.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={categorySpending}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="amount"
-                  >
-                    {categorySpending.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-[300px] items-center justify-center text-muted-foreground">
-                No expense data for this month
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      {/* Charts Row — lazy-loaded to reduce initial bundle on mobile */}
+      <Suspense fallback={
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card><CardContent className="flex h-[350px] items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></CardContent></Card>
+          <Card><CardContent className="flex h-[350px] items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></CardContent></Card>
+        </div>
+      }>
+        <LazyCharts monthlyData={monthlyData} categorySpending={categorySpending} />
+      </Suspense>
 
       {/* Recent Transactions */}
       <Card>
