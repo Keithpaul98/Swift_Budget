@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Wallet, Loader2, CheckCircle2 } from "lucide-react";
+import { logAuthEvent } from "@/lib/auth-events";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -76,6 +77,10 @@ export default function ResetPasswordPage() {
         setLoading(false);
         return;
       }
+
+      // Log the password reset event
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) await logAuthEvent(user.id, "password_reset");
 
       setSuccess(true);
       setTimeout(() => router.push("/dashboard"), 2000);

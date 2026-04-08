@@ -15,7 +15,7 @@
 // - Conditional rendering: {condition && <JSX>} only renders if condition is true.
 // =============================================================================
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -52,6 +52,8 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { ADMIN_EMAIL } from "@/lib/constants";
+import { reportPerformanceMetrics, resetPerformanceReporter } from "@/lib/performance-reporter";
+import { logAuthEvent } from "@/lib/auth-events";
 
 // Define navigation links — this array drives both desktop and mobile menus.
 // Each object has a label (display text), href (URL path), and icon (Lucide icon).
@@ -104,6 +106,16 @@ export default function Navigation() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Report performance metrics once per page navigation for logged-in users
+  const lastReportedPath = useRef<string | null>(null);
+  useEffect(() => {
+    if (user && pathname !== lastReportedPath.current) {
+      lastReportedPath.current = pathname;
+      resetPerformanceReporter();
+      reportPerformanceMetrics(user.id);
+    }
+  }, [user, pathname]);
+
   // Session timeout — auto-logout after 30 minutes of inactivity
   // Uses debounced handler to avoid thrashing on scroll/touch events (mobile perf)
   useEffect(() => {
@@ -140,6 +152,7 @@ export default function Navigation() {
 
   // Handle logout
   const handleLogout = async () => {
+    if (user) await logAuthEvent(user.id, "logout");
     await supabase.auth.signOut();
     router.push("/");
     router.refresh();

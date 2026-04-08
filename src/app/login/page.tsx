@@ -22,6 +22,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Wallet, Loader2 } from "lucide-react";
+import { logAuthEvent } from "@/lib/auth-events";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -79,8 +80,9 @@ export default function LoginPage() {
         return;
       }
 
-      // Success! Redirect to dashboard
+      // Success! Log the event and redirect to dashboard
       if (data.user) {
+        await logAuthEvent(data.user.id, "login");
         router.push("/dashboard");
         router.refresh(); // Refresh to update server components
       }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import AdminUserDetail from "@/components/admin-user-detail";
 import { useAuth } from "@/hooks/useAuth";
 import { ADMIN_EMAIL } from "@/lib/constants";
 import { formatCurrency } from "@/types/database";
@@ -32,6 +33,7 @@ import {
   Zap,
   AlertTriangle,
   CheckCircle2,
+  Eye,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -116,6 +118,7 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "users" | "logs" | "performance">("overview");
   const [expandedLog, setExpandedLog] = useState<number | null>(null);
+  const [selectedUser, setSelectedUser] = useState<UserActivity | null>(null);
   const [perfMetrics, setPerfMetrics] = useState<PerformanceMetrics | null>(null);
   const [perfLoading, setPerfLoading] = useState(false);
 
@@ -479,57 +482,75 @@ export default function AdminPage() {
 
       {/* Users Tab */}
       {activeTab === "users" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">User Activity</CardTitle>
-            <CardDescription>All registered users and their activity</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {userActivity.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left">
-                      <th className="pb-2 font-medium">User</th>
-                      <th className="pb-2 font-medium hidden sm:table-cell">Joined</th>
-                      <th className="pb-2 font-medium text-center">Txns</th>
-                      <th className="pb-2 font-medium text-right hidden sm:table-cell">Income</th>
-                      <th className="pb-2 font-medium text-right hidden sm:table-cell">Expenses</th>
-                      <th className="pb-2 font-medium text-right">Last Login</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {userActivity.map((ua) => (
-                      <tr key={ua.user_id} className="border-b last:border-0">
-                        <td className="py-3">
-                          <p className="font-medium truncate max-w-[150px]">{ua.username || ua.email}</p>
-                          <p className="text-xs text-muted-foreground truncate max-w-[150px]">{ua.email}</p>
-                        </td>
-                        <td className="py-3 text-xs text-muted-foreground hidden sm:table-cell">
-                          {format(new Date(ua.signup_date), "MMM d, yyyy")}
-                        </td>
-                        <td className="py-3 text-center">{ua.transaction_count}</td>
-                        <td className="py-3 text-right text-green-600 hidden sm:table-cell">
-                          {formatCurrency(ua.total_income)}
-                        </td>
-                        <td className="py-3 text-right text-red-600 hidden sm:table-cell">
-                          {formatCurrency(ua.total_expenses)}
-                        </td>
-                        <td className="py-3 text-right text-xs text-muted-foreground">
-                          {ua.last_login
-                            ? format(new Date(ua.last_login), "MMM d, h:mm a")
-                            : "Never"}
-                        </td>
+        selectedUser ? (
+          <AdminUserDetail
+            userId={selectedUser.user_id}
+            userEmail={selectedUser.email}
+            username={selectedUser.username}
+            supabase={supabase}
+            onBack={() => setSelectedUser(null)}
+          />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">User Activity</CardTitle>
+              <CardDescription>All registered users — click a user to view detailed analytics</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {userActivity.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th className="pb-2 font-medium">User</th>
+                        <th className="pb-2 font-medium hidden sm:table-cell">Joined</th>
+                        <th className="pb-2 font-medium text-center">Txns</th>
+                        <th className="pb-2 font-medium text-right hidden sm:table-cell">Income</th>
+                        <th className="pb-2 font-medium text-right hidden sm:table-cell">Expenses</th>
+                        <th className="pb-2 font-medium text-right">Last Login</th>
+                        <th className="pb-2 font-medium text-center w-10"></th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground text-center py-4">No user data available</p>
-            )}
-          </CardContent>
-        </Card>
+                    </thead>
+                    <tbody>
+                      {userActivity.map((ua) => (
+                        <tr
+                          key={ua.user_id}
+                          className="border-b last:border-0 hover:bg-accent/50 cursor-pointer transition-colors"
+                          onClick={() => setSelectedUser(ua)}
+                        >
+                          <td className="py-3">
+                            <p className="font-medium truncate max-w-[150px]">{ua.username || ua.email}</p>
+                            <p className="text-xs text-muted-foreground truncate max-w-[150px]">{ua.email}</p>
+                          </td>
+                          <td className="py-3 text-xs text-muted-foreground hidden sm:table-cell">
+                            {format(new Date(ua.signup_date), "MMM d, yyyy")}
+                          </td>
+                          <td className="py-3 text-center">{ua.transaction_count}</td>
+                          <td className="py-3 text-right text-green-600 hidden sm:table-cell">
+                            {formatCurrency(ua.total_income)}
+                          </td>
+                          <td className="py-3 text-right text-red-600 hidden sm:table-cell">
+                            {formatCurrency(ua.total_expenses)}
+                          </td>
+                          <td className="py-3 text-right text-xs text-muted-foreground">
+                            {ua.last_login
+                              ? format(new Date(ua.last_login), "MMM d, h:mm a")
+                              : "Never"}
+                          </td>
+                          <td className="py-3 text-center">
+                            <Eye className="h-4 w-4 text-muted-foreground" />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">No user data available</p>
+              )}
+            </CardContent>
+          </Card>
+        )
       )}
 
       {/* Audit Logs Tab */}

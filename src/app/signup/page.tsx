@@ -29,6 +29,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Wallet, Loader2, Check, X } from "lucide-react";
+import { logAuthEvent } from "@/lib/auth-events";
 
 export default function SignupPage() {
   // Router for navigation after signup
@@ -111,10 +112,12 @@ export default function SignupPage() {
         // Check if email confirmation is required
         if (data.user.confirmed_at) {
           // Email already confirmed (auto-confirm enabled)
+          await logAuthEvent(data.user.id, "signup");
           toast.success("Account created successfully!");
           router.push("/dashboard");
         } else {
-          // Email confirmation required
+          // Email confirmation required — log with the user id we have
+          await logAuthEvent(data.user.id, "signup");
           toast.success("Account created! Please check your email to confirm your account.");
           setLoading(false);
           // Don't redirect - show message to check email
