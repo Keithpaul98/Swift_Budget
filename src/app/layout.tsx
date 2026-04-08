@@ -30,6 +30,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href={process.env.NEXT_PUBLIC_SUPABASE_URL} />
+        <link rel="dns-prefetch" href={process.env.NEXT_PUBLIC_SUPABASE_URL} />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
