@@ -311,39 +311,43 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Tab Navigation */}
-      <div className="flex gap-2 border-b pb-2">
+      {/* Tab Navigation — scrollable on mobile */}
+      <div className="flex gap-2 border-b pb-2 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
         <Button
           variant={activeTab === "overview" ? "default" : "ghost"}
           size="sm"
+          className="shrink-0"
           onClick={() => setActiveTab("overview")}
         >
-          <Activity className="h-4 w-4 mr-2" />
-          Overview
+          <Activity className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Overview</span>
         </Button>
         <Button
           variant={activeTab === "users" ? "default" : "ghost"}
           size="sm"
+          className="shrink-0"
           onClick={() => setActiveTab("users")}
         >
-          <Users className="h-4 w-4 mr-2" />
-          Users
+          <Users className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Users</span>
         </Button>
         <Button
           variant={activeTab === "logs" ? "default" : "ghost"}
           size="sm"
+          className="shrink-0"
           onClick={() => setActiveTab("logs")}
         >
-          <Clock className="h-4 w-4 mr-2" />
-          Audit Logs
+          <Clock className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Audit Logs</span>
         </Button>
         <Button
           variant={activeTab === "performance" ? "default" : "ghost"}
           size="sm"
+          className="shrink-0"
           onClick={() => setActiveTab("performance")}
         >
-          <Gauge className="h-4 w-4 mr-2" />
-          Performance
+          <Gauge className="h-4 w-4 sm:mr-2" />
+          <span className="hidden sm:inline">Performance</span>
         </Button>
       </div>
 
@@ -610,11 +614,12 @@ export default function AdminPage() {
       {/* Performance Tab */}
       {activeTab === "performance" && (
         <>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-muted-foreground">Real-time client-side performance metrics from your current session.</p>
             <Button
               variant="outline"
               size="sm"
+              className="shrink-0 self-start sm:self-auto"
               onClick={() => { setPerfMetrics(null); collectPerformanceMetrics(); }}
               disabled={perfLoading}
             >
@@ -776,7 +781,7 @@ export default function AdminPage() {
                   <CardDescription>Network resources loaded for this page</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                     <div>
                       <p className="text-xs text-muted-foreground">Total Resources</p>
                       <p className="text-lg font-bold">{perfMetrics.totalResources}</p>
