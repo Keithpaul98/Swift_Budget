@@ -9,20 +9,22 @@ A modern personal finance application built with Next.js and Supabase. Track inc
 ## Features
 
 ### Core
-- **Transaction Management** — Add, edit, delete income/expense records with search, type/date filters, and pagination
+- **Transaction Management** — Add, edit, delete income/expense records with search, type/date filters, and server-side pagination
 - **Category System** — 17 pre-loaded categories + custom categories with duplicate prevention
 - **Budget Goals** — Set weekly/monthly/yearly spending limits with progress bars and threshold alerts
 - **Project Grouping** — Organize transactions by project with budget tracking
-- **Dashboard** — Financial overview with bar/pie charts, monthly navigation, and summary stats
+- **Dashboard** — Financial overview with lazy-loaded charts, monthly navigation, and summary stats
 - **CSV Export** — Download filtered transactions as a spreadsheet
 
 ### Authentication & Security
-- **Email/Password Auth** — Signup, login, and password reset via Supabase Auth
-- **Session Timeout** — Auto-logout after 30 minutes of inactivity
+- **Email/Password Auth** — Signup, login, and password reset via email (PKCE flow)
+- **Password Reset** — Forgot password flow with email verification through `/auth/callback`
+- **Session Timeout** — Auto-logout after 30 minutes of inactivity (debounced for mobile)
 - **Rate Limiting** — Login lockout after 5 failed attempts; contact form limited to 3/min
 - **Row Level Security** — Database-level data isolation per user
 - **Security Headers** — CSP, HSTS, X-Frame-Options, and more
 - **Audit Logging** — All data changes logged for accountability
+- **Auth Event Tracking** — Logins, logouts, signups, and password resets recorded
 
 ### User Experience
 - **Real-Time Password Feedback** — Live checklist showing password requirements as you type
@@ -31,6 +33,23 @@ A modern personal finance application built with Next.js and Supabase. Track inc
 - **Dark Mode** — System theme detection
 - **Responsive Design** — Mobile, tablet, and desktop layouts
 - **Loading Skeletons** — Smooth loading states
+
+### Admin Dashboard
+- **System Overview** — Total users, transactions, categories, projects, budget goals, daily activity
+- **User Management** — View all users with activity stats; click any user for deep analysis
+- **Per-User Detail View** — Tabs for Performance, Activity Logs, and Auth Events per user
+- **Performance Monitoring** — Auto-collected client-side metrics (page load, FCP, LCP, API latency, connection info, device info) per user per page
+- **Auth Event Timeline** — Track logins, logouts, password resets with device/browser info
+- **Audit Logs** — System-wide CRUD activity with expandable details
+- **Real-Time Admin Metrics** — Own-session performance benchmarks
+
+### Performance Optimizations
+- **Lazy-Loaded Charts** — Recharts loaded via `next/dynamic` (~200KB saved from initial bundle)
+- **Server-Side Pagination** — Transactions use Supabase `.range()` instead of fetching all records
+- **Parallelized Queries** — Dashboard fetches use `Promise.all` (~700ms saved)
+- **DNS Preconnect** — Preconnect hints for Supabase URL (~350ms saved on first API call)
+- **Debounced Listeners** — Session timeout events throttled to reduce mobile CPU usage
+- **Automatic Performance Reporting** — Silent per-page metrics collection for admin monitoring
 
 ---
 
@@ -43,7 +62,7 @@ A modern personal finance application built with Next.js and Supabase. Track inc
 | **Auth** | Supabase Auth (JWT, email/password) |
 | **Storage** | Supabase Storage (profile avatars) |
 | **Styling** | Tailwind CSS v4 + shadcn/ui v4 |
-| **Charts** | Recharts |
+| **Charts** | Recharts (lazy-loaded) |
 | **Icons** | Lucide React |
 | **Email** | EmailJS (server-side API route) |
 | **Testing** | Vitest + Testing Library |
@@ -121,57 +140,64 @@ A modern personal finance application built with Next.js and Supabase. Track inc
 ```
 swiftbudget/
 ├── src/
-│   ├── __tests__/          # Unit tests (Vitest)
-│   ├── app/                # Next.js App Router pages
-│   │   ├── api/contact/    # Server-side email API
-│   │   ├── budget-goals/   # Budget goal management
-│   │   ├── categories/     # Category management
-│   │   ├── contact/        # Contact form
-│   │   ├── dashboard/      # Financial dashboard + charts
-│   │   ├── forgot-password/# Password reset request
-│   │   ├── help/           # FAQ and quick start guide
-│   │   ├── login/          # Login with rate limiting
-│   │   ├── privacy/        # Privacy policy
-│   │   ├── profile/        # User profile + avatar
-│   │   ├── projects/       # Project management
-│   │   ├── reset-password/ # Set new password
-│   │   ├── signup/         # Registration + password feedback
-│   │   ├── terms/          # Terms of service
-│   │   ├── transactions/   # Transaction CRUD + CSV export
-│   │   └── layout.tsx      # Root layout (nav, footer, error boundary)
-│   ├── components/         # Reusable components
-│   │   ├── ui/             # shadcn/ui components (12)
-│   │   ├── confirm-dialog  # Delete confirmation dialog
-│   │   ├── error-boundary  # React Error Boundary
-│   │   ├── footer          # Global footer
-│   │   ├── navigation      # Responsive nav + session timeout
-│   │   └── page-skeleton   # Loading skeletons
+│   ├── __tests__/              # Unit tests (Vitest)
+│   ├── app/                    # Next.js App Router pages (16 routes)
+│   │   ├── admin/              # Admin dashboard (stats, users, logs, performance)
+│   │   ├── api/contact/        # Server-side email API
+│   │   ├── auth/callback/      # Auth code exchange (login, password reset)
+│   │   ├── budget-goals/       # Budget goal management
+│   │   ├── categories/         # Category management
+│   │   ├── contact/            # Contact form
+│   │   ├── dashboard/          # Financial dashboard + lazy-loaded charts
+│   │   ├── forgot-password/    # Password reset request
+│   │   ├── help/               # FAQ and quick start guide
+│   │   ├── login/              # Login with rate limiting + auth event logging
+│   │   ├── privacy/            # Privacy policy
+│   │   ├── profile/            # User profile + avatar
+│   │   ├── projects/           # Project management
+│   │   ├── reset-password/     # Set new password + auth event logging
+│   │   ├── signup/             # Registration + password feedback
+│   │   ├── terms/              # Terms of service
+│   │   ├── transactions/       # Transaction CRUD + server-side pagination
+│   │   └── layout.tsx          # Root layout (nav, footer, error boundary, preconnect)
+│   ├── components/
+│   │   ├── ui/                 # shadcn/ui components
+│   │   ├── admin-user-detail   # Per-user admin detail view (perf, logs, auth)
+│   │   ├── confirm-dialog      # Delete confirmation dialog
+│   │   ├── dashboard-charts    # Lazy-loaded Recharts wrapper
+│   │   ├── error-boundary      # React Error Boundary
+│   │   ├── footer              # Global footer
+│   │   ├── navigation          # Responsive nav + session timeout + perf reporter
+│   │   ├── page-skeleton       # Loading skeletons
+│   │   └── theme-provider      # Dark/light theme provider
 │   ├── hooks/
-│   │   └── useAuth.ts      # Auth hook (user state, session)
+│   │   └── useAuth.ts          # Auth hook (user state, session)
 │   ├── lib/
-│   │   ├── audit.ts        # Audit logging utility
-│   │   ├── constants.ts    # Centralized constants
-│   │   ├── supabase.ts     # Browser Supabase client
-│   │   └── supabase-server.ts # Server Supabase client
+│   │   ├── audit.ts            # Audit logging utility
+│   │   ├── auth-events.ts      # Auth event logging (login, logout, reset)
+│   │   ├── constants.ts        # Centralized constants
+│   │   ├── performance-reporter.ts # Client-side perf metrics reporter
+│   │   ├── supabase.ts         # Browser Supabase client
+│   │   ├── supabase-server.ts  # Server Supabase client
+│   │   └── utils.ts            # Utility functions
 │   ├── types/
-│   │   └── database.ts     # TypeScript interfaces + formatCurrency
-│   └── middleware.ts       # Auth middleware (session + route guards)
+│   │   └── database.ts         # TypeScript interfaces + formatCurrency
+│   └── middleware.ts           # Auth middleware (session + route guards)
 ├── supabase/
-│   └── migrations/         # Database schema (7 tables + RLS)
-├── ARCHITECTURE.md         # Technical architecture report
-├── DOCUMENTATION.md        # Full system documentation
-├── netlify.toml            # Netlify deployment config
-└── next.config.ts          # Security headers + React compiler
-```
+│   └── migrations/             # Database schema (5 migration files)
+├── ARCHITECTURE.md             # Technical architecture report
+├── DOCUMENTATION.md            # Full system documentation
+├── netlify.toml                # Netlify deployment config
+└── next.config.ts              # Security headers + React compiler
 
 ---
 
 ## Database
 
-7 tables with Row Level Security, check constraints, and foreign keys:
+9 tables with Row Level Security, check constraints, and foreign keys:
 
 | Table | Purpose |
-|-------|---------|
+|-------|--------|
 | `profiles` | User profile data (extends Supabase Auth) |
 | `categories` | Income/expense categories (17 defaults + custom) |
 | `transactions` | Financial records with soft delete |
@@ -179,8 +205,18 @@ swiftbudget/
 | `projects` | Transaction grouping by project |
 | `recurring_transactions` | Schema ready (UI planned) |
 | `audit_logs` | CRUD action logging |
+| `user_performance_logs` | Client-side performance snapshots per user/page |
+| `user_auth_events` | Login, logout, signup, password reset tracking |
 
-Full schema in `supabase/migrations/001_initial_schema.sql`.
+### SQL Migrations
+
+| File | Purpose |
+|------|--------|
+| `001_initial_schema.sql` | Core tables, RLS policies, defaults, profile trigger |
+| `002_fix_profile_rls.sql` | Profile RLS policy fixes |
+| `003_add_project_budget.sql` | Projects and budget goal enhancements |
+| `003_admin_functions.sql` | Admin RPC functions for system stats and user activity |
+| `004_user_monitoring.sql` | Performance logs, auth events, admin query functions |
 
 ---
 
@@ -207,7 +243,7 @@ Full schema in `supabase/migrations/001_initial_schema.sql`.
 
 **Supabase config:**
 - Set Site URL in Authentication → URL Configuration to your Netlify domain
-- Add `/reset-password` to redirect URLs for password reset flow
+- Add `https://your-domain.netlify.app/auth/callback**` to Redirect URLs (wildcard required for password reset flow)
 
 ---
 
@@ -235,7 +271,8 @@ This project was built as a learning exercise migrating from Python/Flask to mod
 - **TypeScript** — Type safety, interfaces, generics
 - **React 19** — Hooks, state management, component composition
 - **Security** — CSP headers, rate limiting, input validation, audit logging
-- **Performance** — N+1 query elimination, join queries, batch fetching, pagination
+- **Performance** — Lazy loading, server-side pagination, parallelized queries, DNS preconnect, debounced listeners
+- **Monitoring** — Client-side performance collection, per-user analytics, auth event tracking
 - **Code Review Process** — Receiving feedback, identifying root causes, implementing fixes iteratively
 
 ---
@@ -248,6 +285,7 @@ This project was built as a learning exercise migrating from Python/Flask to mod
 - No real-time multi-device sync
 - EmailJS free tier limited to 200 emails/month
 - No CI/CD pipeline (manual build verification)
+- Admin restricted to single email (hardcoded)
 
 ---
 
